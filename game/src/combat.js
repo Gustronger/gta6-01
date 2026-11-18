@@ -94,9 +94,12 @@ export function fireWeapon(state, x, y, angle, from) {
     damage = weaponStats(weapon).damage;
   }
   const muzzle = 22;
+  // 3D muzzle height: 1.3 on foot, 1.0 from a car seat. Enemies are on foot.
+  const muzzleZ = side === 'enemy' ? 1.3 : (state.player && !state.player.onFoot ? 1.0 : 1.3);
   state.bullets.push({
     x: x + Math.cos(angle) * muzzle,
     y: y + Math.sin(angle) * muzzle,
+    z: muzzleZ,
     vx: Math.cos(angle) * BULLET_SPEED,
     vy: Math.sin(angle) * BULLET_SPEED,
     life: BULLET_LIFE,
@@ -205,6 +208,21 @@ export function punchAttack(state, x, y, angle) {
   const reach = PUNCH_RANGE * PUNCH_RANGE;
   const ax = Math.cos(angle);
   const ay = Math.sin(angle);
+  // 3D lunge: on the first landed hit the attacker nudges a short step
+  // toward the target — a small position offset, never through a wall.
+  let lunged = false;
+  function lunge(target) {
+    if (lunged || !state.player) return;
+    lunged = true;
+    const dx = target.x - x;
+    const dy = target.y - y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = Math.min(worldWidth(), Math.max(0, state.player.x + (dx / dist) * 10));
+    const ny = Math.min(worldHeight(), Math.max(0, state.player.y + (dy / dist) * 10));
+    if (pointInBuilding(state, nx, ny)) return;
+    state.player.x = nx;
+    state.player.y = ny;
+  }
 
   function strike(target, isEnemy, index) {
     const dx = target.x - x;
@@ -219,6 +237,7 @@ export function punchAttack(state, x, y, angle) {
     const push = 26;
     target.x = Math.min(worldWidth(), Math.max(0, target.x + (dx / dist) * push));
     target.y = Math.min(worldHeight(), Math.max(0, target.y + (dy / dist) * push));
+    lunge(target);
     if (target.hp <= 0) {
       if (isEnemy) killEnemy(state, index);
       else killPed(state, target);

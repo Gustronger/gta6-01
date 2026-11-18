@@ -27,6 +27,7 @@ export const MISSIONS = [
     briefing:
       "Nadia Sol: 'Milo, you owe, I collect. First job is simple — lift a car, any car, and bring it to my garage Downtown. Don't scratch it more than it already is.'",
     reward: 300,
+    landmark: "Nadia's garage",
     steps: [
       { text: 'Steal a car', type: 'steal', x: DOWNTOWN_GARAGE.x, y: DOWNTOWN_GARAGE.y, radius: 120 },
       { text: "Drive to Nadia's garage in Downtown", type: 'goto', x: DOWNTOWN_GARAGE.x, y: DOWNTOWN_GARAGE.y, radius: 120 },
@@ -38,6 +39,7 @@ export const MISSIONS = [
     briefing:
       "Nadia Sol: 'A package is waiting at the Docks. Pick it up and run it to the Marina. The VPD will be on you the moment you grab it — don't stop, don't get cute.'",
     reward: 600,
+    landmark: 'the docks cranes',
     // Seconds allowed for the delivery leg, counted from the pickup.
     timeLimit: 150,
     steps: [
@@ -51,6 +53,7 @@ export const MISSIONS = [
     briefing:
       "Nadia Sol: 'The Cobras skimmed my cut at the Docks. Go down there, put four of them on the ground, and bring me the cash they were sitting on.'",
     reward: 900,
+    landmark: 'the container yard',
     steps: [
       { text: 'Go to the Docks', type: 'goto', x: DOCKS_YARD.x, y: DOCKS_YARD.y, radius: 150 },
       { text: 'Eliminate 4 Cobras', type: 'eliminate', x: DOCKS_DEAL.x, y: DOCKS_DEAL.y, radius: 200, count: 4 },
@@ -63,6 +66,7 @@ export const MISSIONS = [
     briefing:
       "Nadia Sol: 'Commissioner Hale put three stars on your head, Milo. Shake every last cop, then get to the hideout in Old Town before they box you in. The clock is running.'",
     reward: 1200,
+    landmark: 'the Old Town hideout',
     // Whole escape must be finished inside this window.
     timeLimit: 180,
     steps: [
@@ -76,6 +80,7 @@ export const MISSIONS = [
     briefing:
       "Nadia Sol: 'Last one, and it's the big one. A gold Aurora GT is parked Downtown — the only one in Velmora. Steal it and bring it to the Marina. Do this and your debt is gone.'",
     reward: 2500,
+    landmark: 'the Downtown towers',
     steps: [
       { text: 'Steal the gold Aurora GT in Downtown', type: 'steal', x: AURORA_SPOT.x, y: AURORA_SPOT.y, radius: 120 },
       { text: 'Deliver the Aurora GT to the Marina', type: 'deliver', x: MARINA_DROP_B.x, y: MARINA_DROP_B.y, radius: 120 },
@@ -87,6 +92,20 @@ function distance(ax, ay, bx, by) {
   const dx = ax - bx;
   const dy = ay - by;
   return Math.sqrt(dx * dx + dy * dy);
+}
+
+// 3D beacon for the current mission marker: a tall pulsing column the
+// renderer draws over the marker. Null when no mission marker is active.
+export function markerBeacon(state) {
+  if (!state || !state.mission || !state.mission.marker) return null;
+  const marker = state.mission.marker;
+  const time = (state && typeof state.time === 'number') ? state.time : 0;
+  return {
+    x: marker.x,
+    y: marker.y,
+    height: 120,
+    pulse: (Math.sin(time * 5) + 1) / 2,
+  };
 }
 
 // Plant mission `index` on the state: objective, marker, timer and the kill

@@ -31,17 +31,25 @@ const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
 
 const canvas = document.getElementById('game');
+const glCanvas = document.getElementById('gl');
 const status = document.getElementById('status');
 const rng = createRandom(seed);
 const city = createCity(rng);
 const world = createWorld(rng, city);
-const renderer = createRenderer(canvas);
+// 3D renderer: WebGL canvas ('gl', three.js scene) + the 2D HUD canvas ('game').
+const renderer = createRenderer(glCanvas, canvas);
 
 let save = null;
 try {
   save = loadSave();
 } catch {
   save = null;
+}
+// Saved 3D camera preference: apply on start (startGame re-applies after reset).
+if (save && save.camera) {
+  world.state.camera.mode = save.camera.mode;
+  world.state.camera.dist = save.camera.dist;
+  world.state.camera.locked = true;
 }
 
 function runShot(name) {
@@ -87,6 +95,7 @@ function runGame() {
         cash,
         bestCash: best,
         muted: audio.muted,
+        camera: { mode: state.camera.mode, dist: state.camera.dist },
       });
     } catch {
       // Storage can be off (private windows): progress then lasts this visit only.
@@ -100,6 +109,12 @@ function runGame() {
 
   function startGame() {
     world.reset();
+    // Restore the saved 3D camera preference (reset() returns it to follow/260).
+    if (save && save.camera) {
+      world.state.camera.mode = save.camera.mode;
+      world.state.camera.dist = save.camera.dist;
+      world.state.camera.locked = true;
+    }
     // Resume the story where the save left it (replay the finale once done).
     startMission(world.state, Math.min(missionsDone, MISSIONS.length - 1));
     accumulator = 0;
@@ -123,10 +138,13 @@ function runGame() {
 
   function handleEvents(events) {
     if (!events) return;
-    if (events & EVENT_SHOT) audio.sfx('shot');
-    if (events & EVENT_PUNCH) audio.sfx('punch');
+    // Shot / punch / pickup sounds are positional, heard from Milo's spot.
+    const px = world.state.player.x;
+    const py = world.state.player.y;
+    if (events & EVENT_SHOT) audio.sfxAt('shot', px, py, px, py);
+    if (events & EVENT_PUNCH) audio.sfxAt('punch', px, py, px, py);
     if (events & EVENT_PICKUP) {
-      audio.sfx('pickup');
+      audio.sfxAt('pickup', px, py, px, py);
       announce('Picked up. Cash ' + Math.round(world.state.player.cash || 0) + '.');
     }
     if (events & EVENT_CRASH) audio.sfx('crash');
@@ -183,6 +201,22 @@ function runGame() {
       audio.setMuted(!audio.muted);
       persist();
       announce(audio.muted ? 'Muted.' : 'Sound on.');
+    }
+
+    // 3D camera controls. C cycles follow -> chase -> high: the chosen mode
+    // is locked (step() will not auto-switch it) and saved as a preference.
+    // The mouse wheel zooms the camera distance, clamped to 160..1400.
+    if (raw.camToggle && screen === SCREEN_PLAY) {
+      const modes = ['follow', 'chase', 'high'];
+      const next = modes[(modes.indexOf(world.state.camera.mode) + 1) % modes.length];
+      world.state.camera.mode = next;
+      world.state.camera.locked = true;
+      persist();
+      announce('Camera: ' + next + '.');
+    }
+    if (raw.zoom) {
+      world.state.camera.dist = Math.max(160, Math.min(1400,
+        world.state.camera.dist + raw.zoom * 0.5));
     }
 
     // Screen transitions from the edge flags of this frame's input.

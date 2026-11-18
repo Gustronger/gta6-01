@@ -1,6 +1,7 @@
 // Seeded randomness for Velmora. Every draw comes from one 32-bit state that
 // only moves forward, so the same seed always builds the same city and the
 // same traffic — that is what makes the screenshot scenes repeatable.
+// Determinism covers the 3D staging too: building heights, lamps, cranes and trees all draw from this same generator.
 //
 // The generator below is a mulberry32-style scrambler written from scratch
 // for this game: advance the state by a golden-ratio constant, xor-shift and

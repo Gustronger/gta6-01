@@ -147,10 +147,16 @@ export function createCity(random) {
         }
         // Towers rise taller than their footprint suggests; keep the rect
         // itself honest so collision stays simple and the renderer can draw
-        // height from the kind.
+        // height from the kind. 3D fields: h is the building height in world
+        // units (towers 90-160, houses 14-26, warehouses 22-34, shops 18-30)
+        // and winSeed varies the window pattern per building.
+        const heightByKind = { tower: [90, 160], house: [14, 26], warehouse: [22, 34], shop: [18, 30] };
+        const heightRange = heightByKind[kind] || [14, 26];
         buildings.push({
           x: bx0, y: by0, w, h,
           kind, district, color, roof,
+          h: randInt(rng, heightRange[0], heightRange[1]),
+          winSeed: randInt(rng, 0, 9999),
         });
       }
     }
@@ -160,6 +166,33 @@ export function createCity(random) {
   for (const line of LINES) {
     roads.push({ x1: 0, y1: line, x2: WORLD.width, y2: line, horizontal: true });
     roads.push({ x1: line, y1: 0, x2: line, y2: WORLD.height, horizontal: false });
+  }
+
+  // Streetlights: one per ~2 intersections, on the corner just off the road.
+  const lamps = [];
+  for (const lx of LINES) {
+    for (const ly of LINES) {
+      if (rng() < 0.5) lamps.push({ x: lx + 58, y: ly + 58 });
+    }
+  }
+
+  // Three dock cranes in the Docks, over the container yard.
+  const cranes = [
+    { x: 2912, y: 3568, angle: randFloat(rng, -0.4, 0.4) },
+    { x: 3360, y: 3568, angle: randFloat(rng, -0.4, 0.4) },
+    { x: 3808, y: 3568, angle: randFloat(rng, -0.4, 0.4) },
+  ];
+
+  // Trees inside the parks: ~6 per park, seeded position and size.
+  const trees = [];
+  for (const park of parks) {
+    for (let t = 0; t < 6; t += 1) {
+      trees.push({
+        x: randFloat(rng, park.x + 24, park.x + park.w - 24),
+        y: randFloat(rng, park.y + 24, park.y + park.h - 24),
+        s: randFloat(rng, 0.8, 1.4),
+      });
+    }
   }
 
   // Garages sit on roadside lots: Pay-n-Spray in Downtown, the gun shop
@@ -198,6 +231,9 @@ export function createCity(random) {
     buildings,
     parks,
     roads,
+    lamps,
+    cranes,
+    trees,
     beach: { y0: 3904 },
     garages,
     shops,

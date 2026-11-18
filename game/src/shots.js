@@ -38,8 +38,19 @@ function setMission(state, index, objective, marker) {
   state.mission = { index, step: 0, objective, marker, timer: 0 };
 }
 
+// 3D camera for the shot: locked so world.step() never auto-switches the
+// mode away from the staged framing.
+function setCamera(state, mode, dist, yaw) {
+  state.camera.mode = mode;
+  state.camera.dist = dist;
+  state.camera.yaw = yaw;
+  state.camera.locked = true;
+}
+
 /** 'start': six seconds of traffic and peds moving under the title screen. */
 function stageStart(world) {
+  // High over the city center, title screen.
+  setCamera(world.state, 'high', 1300, 0.4);
   run(world, 6);
   return { screen: SCREEN_TITLE, best: 0 };
 }
@@ -47,6 +58,8 @@ function stageStart(world) {
 /** 'cover': Milo on foot in Downtown, mission 1 active, traffic and peds around him. */
 function stageCover(world) {
   const state = world.state;
+  // Elevated wide over Downtown.
+  setCamera(state, 'high', 1100, -0.6);
   const spot = nearIntersection(2900, 700);
   state.player.x = spot.x;
   state.player.y = spot.y;
@@ -86,6 +99,7 @@ function stageCover(world) {
 /** 'chase': Milo driving at speed with a 3-star wanted level and police on his tail. */
 function stageChase(world) {
   const state = world.state;
+  setCamera(state, 'chase', 320, 0);
   const road = nearIntersection(1500, 2016);
   // Find a drivable car; if the fresh world spawned none, build one.
   let car = (state.cars || []).find((c) => c.kind !== 'police');
@@ -131,6 +145,7 @@ function stageChase(world) {
 /** 'mission': a firefight at the Docks — Cobras present, muzzle flashes, objective up. */
 function stageMission(world) {
   const state = world.state;
+  setCamera(state, 'follow', 260, 0);
   const spot = nearIntersection(2900, 3360);
   state.player.x = spot.x;
   state.player.y = spot.y;
