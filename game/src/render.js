@@ -1,15 +1,12 @@
-// Drawing only: the world's state and the current screen in, pixels out. The
-// world itself is now real 3D — scene3d.js renders it into the #gl WebGL
-// canvas behind this one — while the HUD, minimap and panels are still drawn
-// on this 2D canvas in logical 1280x720 space, exactly as in v1. Colours come
-// from config's PALETTE where it defines them; every colour has a sun-soaked
-// fallback so a palette gap never blanks the frame.
-//
-// createRenderer(glCanvas, hudCanvas) — with one argument (the HUD canvas,
-// as main.js calls it) the GL canvas is looked up as #gl. screenToWorld
-// raycasts through the 3D camera onto the ground plane.
+// VELMORA — Sunset Streets: 2D HUD over the 3D world.
+// The world itself is drawn by scene3d.js (three.js); this module owns the
+// canvas HUD, the minimap, the objective banner and every menu screen.
+// Public surface (fixed by the game contract):
+//   SCREEN_TITLE / SCREEN_PLAY / SCREEN_PAUSED / SCREEN_OVER
+//   createRenderer(glCanvas, hudCanvas) -> { draw(state, screen, ui), screenToWorld(sx, sy) }
+//     ui = { best, save, message, overKind: 'busted' | 'wasted' | null }
 
-import { CAR, FONT, PALETTE, VIEW, WORLD } from './config.js';
+import { VIEW, PALETTE, FONT, CAR } from './config.js';
 import { createScene3D } from './scene3d.js';
 
 export const SCREEN_TITLE = 'title';
@@ -17,359 +14,406 @@ export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
 export const SCREEN_OVER = 'over';
 
-const VIEW_W = (VIEW && VIEW.width) || 1280;
-const VIEW_H = (VIEW && VIEW.height) || 720;
-const WORLD_W = (WORLD && WORLD.width) || 4096;
-const WORLD_H = (WORLD && WORLD.height) || 4096;
+// The config font is a family name; fall back to a plain stack when it is
+// anything else, so a bad value can never break canvas text.
+const FONT_FAMILY =
+  typeof FONT === 'string' && FONT.length > 0 && !/[0-9]/.test(FONT)
+    ? FONT
+    : 'Trebuchet MS, Verdana, system-ui, sans-serif';
 
-// Palette with a fallback for every key, so the frame survives a sparse config.
-const P = PALETTE || {};
-const C = {
-  backdrop: P.backdrop ?? '#171226',
-  ground: P.ground ?? '#c98d5f',
-  ocean: P.ocean ?? '#2a6f8e',
-  oceanDeep: P.oceanDeep ?? '#1f5570',
-  sand: P.sand ?? '#e8c98f',
-  road: P.road ?? '#3a3a44',
-  sidewalk: P.sidewalk ?? '#b9a58c',
-  lane: P.lane ?? '#e8d27a',
-  park: P.park ?? '#5d9b4a',
-  tree: P.tree ?? '#3d7a33',
-  treeLight: P.treeLight ?? '#79b657',
-  shadow: P.shadow ?? 'rgba(20, 10, 30, 0.35)',
-  roofLine: P.roofLine ?? 'rgba(255,255,255,0.25)',
-  text: P.text ?? '#fff6e8',
-  muted: P.muted ?? '#d8c9b0',
-  accent: P.accent ?? '#ffc94d',
-  panel: P.panel ?? 'rgba(24, 16, 36, 0.88)',
-  panelEdge: P.panelEdge ?? '#ffc94d',
-  health: P.health ?? '#58d68d',
-  healthLow: P.healthLow ?? '#ff5a4e',
-  healthBg: P.healthBg ?? 'rgba(0,0,0,0.55)',
-  star: P.star ?? '#ffc94d',
-  starEmpty: P.starEmpty ?? 'rgba(255,255,255,0.6)',
-  cash: P.cash ?? '#7be382',
-  danger: P.danger ?? '#ff5a4e',
-  marker: P.marker ?? '#ffcf3f',
-  policeRed: P.policeRed ?? '#ff3b30',
-  policeBlue: P.policeBlue ?? '#2f7bff',
-  policeBody: P.policeBody ?? '#f2f2f2',
-  pedShirt: P.pedShirt ?? '#e8e0d0',
-  copBlue: P.copBlue ?? '#2f5fd0',
-  gangRed: P.gangRed ?? '#c0392b',
-  bullet: P.bullet ?? '#ffe9a3',
-  minimapBg: P.minimapBg ?? 'rgba(16, 12, 28, 0.78)',
-  minimapRoad: P.minimapRoad ?? '#8a8a96',
-  minimapEdge: P.minimapEdge ?? 'rgba(255,255,255,0.4)',
-  playerArrow: P.playerArrow ?? '#ffffff',
-  policeDot: P.policeDot ?? '#4da3ff',
-  garageIcon: P.garageIcon ?? '#ffc94d',
-};
+const MAP_SIZE = 208;
+const MAP_MARGIN = 14;
 
-const FONT_FAMILY = FONT || 'system-ui, -apple-system, "Segoe UI", sans-serif';
-const MINIMAP = 220;
-const MINIMAP_MARGIN = 16;
+function font(size, weight = 700) {
+  return `${weight} ${size}px ${FONT_FAMILY}`;
+}
 
-function money(amount) {
-  const value = Math.round(amount || 0);
-  return '$' + value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+function cash(n) {
+  return '$' + Math.floor(n || 0).toLocaleString('en-US');
+}
+
+// Rounded-rect path helper (works even where roundRect is missing).
+function rr(c, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + rad, y);
+  c.lineTo(x + w - rad, y);
+  c.arcTo(x + w, y, x + w, y + rad, rad);
+  c.lineTo(x + w, y + h - rad);
+  c.arcTo(x + w, y + h, x + w - rad, y + h, rad);
+  c.lineTo(x + rad, y + h);
+  c.arcTo(x, y + h, x, y + h - rad, rad);
+  c.lineTo(x, y + rad);
+  c.arcTo(x, y, x + rad, y, rad);
+  c.closePath();
+}
+
+// Dark translucent plate behind a HUD element, so text stays legible
+// over the bright 3D sunset scene.
+function plate(c, x, y, w, h, alpha = 0.72) {
+  c.save();
+  c.globalAlpha = alpha;
+  c.fillStyle = PALETTE.hud;
+  rr(c, x, y, w, h, 9);
+  c.fill();
+  c.restore();
+}
+
+function label(c, text, x, y, size, color, weight = 700, align = 'left') {
+  c.save();
+  c.font = font(size, weight);
+  c.fillStyle = color;
+  c.textAlign = align;
+  c.textBaseline = 'middle';
+  c.fillText(text, x, y);
+  c.restore();
+}
+
+function starPath(c, cx, cy, r) {
+  c.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const px = cx + Math.cos(a) * rad;
+    const py = cy + Math.sin(a) * rad;
+    if (i === 0) c.moveTo(px, py);
+    else c.lineTo(px, py);
+  }
+  c.closePath();
+}
+
+function drawWanted(c, wanted) {
+  const x0 = VIEW.width - 14 - 5 * 30;
+  const y = 30;
+  plate(c, x0 - 10, 10, 5 * 30 + 20, 42);
+  for (let i = 0; i < 5; i++) {
+    const cx = x0 + 15 + i * 30;
+    starPath(c, cx, y, 11);
+    if (i < wanted) {
+      c.fillStyle = '#ffd23e';
+      c.fill();
+    } else {
+      c.fillStyle = 'rgba(255,255,255,0.18)';
+      c.fill();
+      c.strokeStyle = 'rgba(255,255,255,0.45)';
+      c.lineWidth = 1;
+      c.stroke();
+    }
+  }
+}
+
+function drawCashHealth(c, player) {
+  plate(c, 14, 10, 250, 64);
+  label(c, cash(player.cash), 28, 30, 24, PALETTE.text);
+  label(c, 'HEALTH', 28, 56, 11, PALETTE.muted, 700);
+  const bw = 150;
+  const bx = 96;
+  const by = 49;
+  c.save();
+  c.fillStyle = 'rgba(255,255,255,0.16)';
+  rr(c, bx, by, bw, 14, 7);
+  c.fill();
+  const hp = Math.max(0, Math.min(100, player.health || 0)) / 100;
+  c.fillStyle = hp > 0.5 ? '#58d68d' : hp > 0.25 ? '#ffb02e' : '#ff5a5a';
+  if (hp > 0) {
+    rr(c, bx, by, Math.max(14, bw * hp), 14, 7);
+    c.fill();
+  }
+  c.restore();
+  label(c, String(Math.ceil(player.health || 0)), bx + bw + 10, 56, 13, PALETTE.text);
+}
+
+function drawObjective(c, mission, time) {
+  const text = mission && mission.objective ? mission.objective : '';
+  if (!text) return;
+  c.save();
+  c.font = font(15, 700);
+  const w = Math.min(620, c.measureText(text).width + 56);
+  const x = (VIEW.width - w) / 2;
+  plate(c, x, 10, w, 40);
+  c.fillStyle = PALETTE.accent;
+  c.beginPath();
+  c.arc(x + 22, 30, 5 + Math.sin(time * 4) * 1.5, 0, Math.PI * 2);
+  c.fill();
+  label(c, text, x + 36, 31, 15, PALETTE.text);
+  c.restore();
+}
+
+function drawMinimap(c, state) {
+  const city = state.city;
+  const size = MAP_SIZE;
+  const x0 = MAP_MARGIN;
+  const y0 = VIEW.height - MAP_MARGIN - size;
+  plate(c, x0 - 6, y0 - 6, size + 12, size + 12, 0.78);
+  c.save();
+  c.beginPath();
+  c.rect(x0, y0, size, size);
+  c.clip();
+  c.fillStyle = '#101018';
+  c.fillRect(x0, y0, size, size);
+  const k = size / 4096;
+  // Parks first, so roads draw over them.
+  if (city && Array.isArray(city.parks)) {
+    c.fillStyle = 'rgba(86,160,90,0.55)';
+    for (const p of city.parks) c.fillRect(x0 + p.x * k, y0 + p.y * k, p.w * k, p.h * k);
+  }
+  // Roads: the city's road list, or the raw grid lines as a fallback.
+  c.strokeStyle = 'rgba(220,220,230,0.75)';
+  c.lineWidth = 2;
+  c.beginPath();
+  if (city && Array.isArray(city.roads) && city.roads.length > 0) {
+    for (const r of city.roads) {
+      c.moveTo(x0 + r.x1 * k, y0 + r.y1 * k);
+      c.lineTo(x0 + r.x2 * k, y0 + r.y2 * k);
+    }
+  } else if (city && Array.isArray(city.lines)) {
+    for (const line of city.lines) {
+      c.moveTo(x0 + line * k, y0);
+      c.lineTo(x0 + line * k, y0 + size);
+      c.moveTo(x0, y0 + line * k);
+      c.lineTo(x0 + size, y0 + line * k);
+    }
+  }
+  c.stroke();
+  const dot = (wx, wy, color, r) => {
+    c.fillStyle = color;
+    c.beginPath();
+    c.arc(x0 + wx * k, y0 + wy * k, r, 0, Math.PI * 2);
+    c.fill();
+  };
+  // Garages: spray (S) and gun shop (A).
+  if (city && Array.isArray(city.garages)) {
+    for (const g of city.garages) {
+      const gx = x0 + g.x * k;
+      const gy = y0 + g.y * k;
+      c.fillStyle = g.kind === 'spray' ? '#4dd0e1' : '#ffb74d';
+      c.fillRect(gx - 4, gy - 4, 8, 8);
+      c.fillStyle = '#101018';
+      c.font = font(7, 800);
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(g.kind === 'spray' ? 'S' : 'A', gx, gy + 0.5);
+    }
+  }
+  // Hideout.
+  if (city && city.hideout) dot(city.hideout.x, city.hideout.y, '#ffffff', 3);
+  // Mission marker: pulsing gold diamond.
+  const marker = state.mission && state.mission.marker;
+  if (marker) {
+    const mx = x0 + marker.x * k;
+    const my = y0 + marker.y * k;
+    const pr = 5 + Math.sin(state.time * 4) * 1.5;
+    c.fillStyle = '#ffd23e';
+    c.beginPath();
+    c.moveTo(mx, my - pr);
+    c.lineTo(mx + pr, my);
+    c.lineTo(mx, my + pr);
+    c.lineTo(mx - pr, my);
+    c.closePath();
+    c.fill();
+  }
+  // Police cars and foot cops.
+  if (Array.isArray(state.cars)) {
+    for (const car of state.cars) {
+      if (car.driver === 'police') dot(car.x, car.y, '#ff4d4d', 3);
+    }
+  }
+  if (Array.isArray(state.peds)) {
+    for (const p of state.peds) {
+      if (p.kind === 'cop') dot(p.x, p.y, '#ff8a8a', 2);
+    }
+  }
+  // The player: a white arrow pointing where Milo faces.
+  const p = state.player;
+  c.save();
+  c.translate(x0 + p.x * k, y0 + p.y * k);
+  c.rotate(p.angle || 0);
+  c.fillStyle = '#ffffff';
+  c.strokeStyle = '#101018';
+  c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(8, 0);
+  c.lineTo(-6, -5);
+  c.lineTo(-3, 0);
+  c.lineTo(-6, 5);
+  c.closePath();
+  c.fill();
+  c.stroke();
+  c.restore();
+  c.restore();
+  label(c, 'VELMORA', x0, y0 - 14, 11, PALETTE.muted, 700);
+}
+
+function drawDrivePanel(c, player) {
+  const driving = !player.onFoot && player.car;
+  const speed = driving
+    ? Math.min(180, Math.round(((player.car.speed || player.speed || 0) / CAR.maxSpeed) * 180))
+    : 0;
+  const w = 210;
+  const h = driving ? 58 : 84;
+  const x = VIEW.width - 14 - w;
+  const y = VIEW.height - 14 - h;
+  plate(c, x, y, w, h);
+  label(c, String(speed), x + 16, y + h / 2 + (driving ? -6 : -12), driving ? 30 : 26, PALETTE.text, 800);
+  label(c, 'km/h', x + 16 + (driving ? 66 : 58), y + h / 2 + (driving ? 0 : -8), 13, PALETTE.muted);
+  if (!driving) {
+    // Weapon readout is hidden while driving; on foot it shows here.
+    const name = (player.weapon || 'fists').toUpperCase();
+    const ammo = player.weapon === 'pistol' || player.weapon === 'smg'
+      ? `  ${player.ammo || 0}`
+      : '';
+    label(c, name + ammo, x + 16, y + h - 20, 15, PALETTE.accent);
+  } else {
+    label(c, 'DRIVING', x + 16, y + h - 12, 12, PALETTE.muted, 700);
+  }
+}
+
+function drawHintBar(c) {
+  const text = 'WASD move  ·  E enter / exit car  ·  SPACE punch  ·  CLICK shoot  ·  C camera  ·  P pause  ·  M mute';
+  c.save();
+  c.font = font(13, 600);
+  const w = c.measureText(text).width + 36;
+  const x = (VIEW.width - w) / 2;
+  plate(c, x, VIEW.height - 56, w, 26, 0.6);
+  label(c, text, VIEW.width / 2, VIEW.height - 42, 13, PALETTE.text, 600, 'center');
+  c.restore();
+}
+
+function drawMessage(c, message) {
+  if (!message) return;
+  c.save();
+  c.font = font(15, 700);
+  const w = Math.min(700, c.measureText(message).width + 40);
+  plate(c, (VIEW.width - w) / 2, VIEW.height - 100, w, 32, 0.8);
+  label(c, message, VIEW.width / 2, VIEW.height - 83, 15, '#ffd23e', 700, 'center');
+  c.restore();
+}
+
+function dim(c) {
+  c.save();
+  c.fillStyle = 'rgba(6,6,16,0.62)';
+  c.fillRect(0, 0, VIEW.width, VIEW.height);
+  c.restore();
+}
+
+function drawTitle(c, state, ui) {
+  dim(c);
+  const cx = VIEW.width / 2;
+  label(c, 'VELMORA', cx, 168, 88, PALETTE.text, 900, 'center');
+  label(c, 'S U N S E T   S T R E E T S', cx, 228, 26, PALETTE.accent, 800, 'center');
+  c.save();
+  c.strokeStyle = PALETTE.accent;
+  c.lineWidth = 2;
+  c.beginPath();
+  c.moveTo(cx - 220, 258);
+  c.lineTo(cx + 220, 258);
+  c.stroke();
+  c.restore();
+  label(c, 'Milo Vane owes a debt he cannot pay.', cx, 300, 17, PALETTE.text, 600, 'center');
+  label(c, 'Fixer Nadia Sol has five jobs that can buy his freedom.', cx, 328, 17, PALETTE.text, 600, 'center');
+  label(c, 'The VPD and the Cobras will not make it easy.', cx, 356, 17, PALETTE.text, 600, 'center');
+  label(c, 'WASD / Arrows — move & drive      E — enter / exit car      SPACE — punch', cx, 412, 14, PALETTE.muted, 600, 'center');
+  label(c, 'Mouse — aim      CLICK — shoot      C — camera      P — pause      M — mute', cx, 438, 14, PALETTE.muted, 600, 'center');
+  // The start prompt is always visible: it must read in a screenshot,
+  // not only on the half of the blink cycle when it is lit.
+  label(c, 'Press Enter or click to start', cx, 500, 22, '#ffd23e', 800, 'center');
+  const save = ui && ui.save;
+  if (save && typeof save.bestCash === 'number') {
+    label(
+      c,
+      `Save found — best cash ${cash(save.bestCash)} · ${save.missionsDone || 0} missions done`,
+      cx, 556, 14, PALETTE.text, 600, 'center',
+    );
+  } else {
+    label(c, 'No save yet — a fresh start in Velmora.', cx, 556, 14, PALETTE.text, 600, 'center');
+  }
+  if (ui && typeof ui.best === 'number' && ui.best > 0 && !save) {
+    label(c, `Best cash ${cash(ui.best)}`, cx, 582, 14, PALETTE.muted, 600, 'center');
+  }
+}
+
+function drawPaused(c) {
+  dim(c);
+  const cx = VIEW.width / 2;
+  plate(c, cx - 190, 250, 380, 190);
+  label(c, 'PAUSED', cx, 310, 44, PALETTE.text, 900, 'center');
+  label(c, 'Press P or Esc to resume', cx, 368, 16, PALETTE.muted, 600, 'center');
+  label(c, 'M — mute      Enter — resume', cx, 398, 14, PALETTE.muted, 600, 'center');
+}
+
+function drawOver(c, state, ui) {
+  dim(c);
+  const cx = VIEW.width / 2;
+  const busted = ui && ui.overKind === 'busted';
+  label(c, busted ? 'BUSTED' : 'WASTED', cx, 250, 72, busted ? '#6ea8ff' : '#ff5a5a', 900, 'center');
+  label(
+    c,
+    busted ? 'The VPD caught up with Milo.' : 'Milo went down in the streets of Velmora.',
+    cx, 312, 17, PALETTE.text, 600, 'center',
+  );
+  const stats = state.stats || {};
+  label(
+    c,
+    `Cash ${cash(state.player.cash)}  ·  Missions ${stats.missionsDone || 0}  ·  Cars stolen ${stats.carsStolen || 0}  ·  Kills ${stats.kills || 0}`,
+    cx, 360, 15, PALETTE.muted, 600, 'center',
+  );
+  label(c, 'Press Enter to try again', cx, 420, 20, '#ffd23e', 800, 'center');
+}
+
+function drawHud(c, state, ui) {
+  const player = state.player;
+  drawCashHealth(c, player);
+  drawWanted(c, player.wanted || 0);
+  drawObjective(c, state.mission, state.time || 0);
+  drawMinimap(c, state);
+  drawDrivePanel(c, player);
+  drawHintBar(c);
+  drawMessage(c, ui && ui.message);
 }
 
 export function createRenderer(glCanvas, hudCanvas) {
-  // One-argument call (main.js): the argument is the HUD canvas (#game) and
-  // the GL canvas is the #gl element stacked behind it.
-  const hud = hudCanvas || glCanvas;
-  const gl = hudCanvas ? glCanvas : (document.getElementById('gl') || glCanvas);
-  const ctx = hud.getContext('2d');
-  // view: how the logical 1280x720 maps onto the real canvas (device pixels).
-  const view = { scale: 1, x: 0, y: 0, ratio: 1 };
-  const fonts = new Map();
-  // The 3D scene, built lazily on the first draw once state.city is known.
-  let scene3d = null;
-  let lastT = 0;
-
-  function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    hud.width = width;
-    hud.height = height;
-    view.ratio = ratio;
-    view.scale = Math.min(width / VIEW_W, height / VIEW_H);
-    view.x = (width - VIEW_W * view.scale) / 2;
-    view.y = (height - VIEW_H * view.scale) / 2;
-  }
-
-  function font(size, weight) {
-    const key = size + '/' + (weight || '');
-    if (!fonts.has(key)) fonts.set(key, (weight ? weight + ' ' : '') + size + 'px ' + FONT_FAMILY);
-    return fonts.get(key);
-  }
-
-  function text(value, x, y, size, color, align, weight) {
-    ctx.font = font(size, weight);
-    ctx.fillStyle = color;
-    ctx.textAlign = align || 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(value, x, y);
-  }
-
-  function clamp(value, min, max) {
-    return value < min ? min : value > max ? max : value;
-  }
-
-  // ---- HUD + screens (drawn in logical view coords) ----
-
-  function drawHud(state, ui) {
-    const player = state.player;
-    const time = state.time || 0;
-    // Cash + health, top-left.
-    ctx.fillStyle = C.healthBg;
-    ctx.fillRect(14, 12, 240, 58);
-    text(money(player.cash), 24, 36, 26, C.cash, 'left', 'bold');
-    const healthW = 220;
-    const healthFrac = clamp((player.health || 0) / 100, 0, 1);
-    ctx.fillStyle = '#00000088';
-    ctx.fillRect(24, 46, healthW, 12);
-    ctx.fillStyle = healthFrac > 0.3 ? C.health : C.healthLow;
-    ctx.fillRect(24, 46, healthW * healthFrac, 12);
-    // Wanted stars, top-right, on a dark plate so they read over bright towers.
-    const wanted = clamp(player.wanted || 0, 0, 5);
-    const starsRight = VIEW_W - 24;
-    const starsLeft = starsRight - 5 * 30;
-    ctx.font = font(16, 'bold');
-    const labelW = ctx.measureText('WANTED').width;
-    const wantedPlateX = starsLeft - 8 - labelW - 12;
-    ctx.fillStyle = C.healthBg;
-    ctx.fillRect(wantedPlateX, 10, VIEW_W - 12 - wantedPlateX, 44);
-    for (let s = 0; s < 5; s += 1) {
-      text(s < wanted ? '★' : '☆', starsRight - s * 30, 40, 28, s < wanted ? C.star : C.starEmpty, 'right');
-    }
-    text('WANTED', starsLeft - 8, 36, 16, C.muted, 'right', 'bold');
-    // Objective banner, top-centre.
-    const mission = state.mission;
-    if (mission && mission.objective) {
-      const label = mission.objective.length > 64 ? mission.objective.slice(0, 61) + '…' : mission.objective;
-      ctx.font = font(20, 'bold');
-      const w = Math.min(ctx.measureText(label).width + 36, VIEW_W - 560);
-      ctx.fillStyle = C.panel;
-      ctx.fillRect((VIEW_W - w) / 2, 12, w, 40);
-      ctx.strokeStyle = C.panelEdge;
-      ctx.lineWidth = 2;
-      ctx.strokeRect((VIEW_W - w) / 2, 12, w, 40);
-      text(label, VIEW_W / 2, 40, 20, C.text, 'center', 'bold');
-    }
-    // Transient mission card / announcement under the banner.
-    if (ui && ui.message) {
-      ctx.font = font(22, 'bold');
-      const w = Math.min(ctx.measureText(ui.message).width + 40, VIEW_W - 200);
-      ctx.fillStyle = C.panel;
-      ctx.fillRect((VIEW_W - w) / 2, 60, w, 44);
-      ctx.strokeStyle = C.accent;
-      ctx.lineWidth = 2;
-      ctx.strokeRect((VIEW_W - w) / 2, 60, w, 44);
-      text(ui.message, VIEW_W / 2, 90, 22, C.accent, 'center', 'bold');
-    }
-    drawMinimap(state);
-    // Bottom-right HUD, on a dark plate so road markings never show through
-    // the text. Car speed is px/s (CAR.maxSpeed is full speed); show it as a
-    // road speed with full speed at 180 km/h, not the raw px/s number. The
-    // weapon readout is hidden while driving — fists need no HUD slot there.
-    const driving = !player.onFoot && player.car;
-    if (driving) {
-      const kmh = Math.min(180, Math.round(Math.abs(player.car.speed || 0) * 180 / (CAR.maxSpeed || 640)));
-      const speedLabel = kmh + ' km/h';
-      ctx.font = font(20);
-      const speedW = ctx.measureText(speedLabel).width;
-      ctx.fillStyle = C.healthBg;
-      ctx.fillRect(VIEW_W - 24 - speedW - 16, VIEW_H - 92, speedW + 36, 44);
-      text(speedLabel, VIEW_W - 24, VIEW_H - 56, 20, C.muted, 'right');
+  // Resolve both canvases defensively: the boot code may pass (gl, hud),
+  // a single canvas, or nothing — the DOM ids are the fallback in all cases.
+  let gl = glCanvas || null;
+  let hudC = hudCanvas || null;
+  if (gl && !hudC) {
+    if (gl.id === 'game') {
+      hudC = gl;
+      gl = document.getElementById('gl');
     } else {
-      const weapon = (player.weapon || 'fists').toUpperCase();
-      const ammo = player.weapon === 'fists' ? '∞' : String(player.ammo || 0);
-      const weaponLabel = weapon + '  ' + ammo;
-      ctx.font = font(24, 'bold');
-      const weaponW = ctx.measureText(weaponLabel).width;
-      ctx.fillStyle = C.healthBg;
-      ctx.fillRect(VIEW_W - 24 - weaponW - 16, VIEW_H - 60, weaponW + 36, 48);
-      text(weaponLabel, VIEW_W - 24, VIEW_H - 24, 24, C.text, 'right', 'bold');
-    }
-    // Controls hint, fading out over the first seconds of play.
-    if (time < 12) {
-      const hint = 'WASD move / drive   •   E enter car   •   Click shoot   •   Space punch   •   P pause   •   M mute';
-      ctx.font = font(17);
-      const hintW = ctx.measureText(hint).width;
-      ctx.globalAlpha = clamp((12 - time) / 4, 0, 1) * 0.9;
-      ctx.fillStyle = C.healthBg;
-      ctx.fillRect((VIEW_W - hintW) / 2 - 14, VIEW_H - 48, hintW + 28, 30);
-      text(hint, VIEW_W / 2, VIEW_H - 24, 17, C.text, 'center');
-      ctx.globalAlpha = 1;
+      hudC = document.getElementById('game');
     }
   }
+  if (!gl) gl = document.getElementById('gl');
+  if (!hudC) hudC = document.getElementById('game');
+  const hud = hudC.getContext('2d');
+  hudC.width = VIEW.width;
+  hudC.height = VIEW.height;
+  let scene = null;
 
-  function drawMinimap(state) {
-    const city = state.city || {};
-    const x0 = MINIMAP_MARGIN;
-    const y0 = VIEW_H - MINIMAP_MARGIN - MINIMAP;
-    const scale = MINIMAP / WORLD_W;
-    ctx.fillStyle = C.minimapBg;
-    ctx.fillRect(x0, y0, MINIMAP, MINIMAP);
-    ctx.strokeStyle = C.minimapEdge;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x0, y0, MINIMAP, MINIMAP);
-    // Roads.
-    ctx.strokeStyle = C.minimapRoad;
-    ctx.lineWidth = 2;
-    const roads = city.roads || [];
-    for (let i = 0; i < roads.length; i += 1) {
-      const r = roads[i];
-      ctx.beginPath();
-      ctx.moveTo(x0 + r.x1 * scale, y0 + r.y1 * scale);
-      ctx.lineTo(x0 + r.x2 * scale, y0 + r.y2 * scale);
-      ctx.stroke();
-    }
-    // Beach line along the south edge.
-    const beachY = (city.beach && city.beach.y0) || 3904;
-    ctx.strokeStyle = C.ocean;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0 + beachY * scale);
-    ctx.lineTo(x0 + MINIMAP, y0 + beachY * scale);
-    ctx.stroke();
-    // Garages.
-    const garages = city.garages || [];
-    ctx.fillStyle = C.garageIcon;
-    for (let i = 0; i < garages.length; i += 1) {
-      ctx.fillRect(x0 + garages[i].x * scale - 3, y0 + garages[i].y * scale - 3, 6, 6);
-    }
-    // Mission blip, pulsing.
-    const mission = state.mission;
-    if (mission && mission.marker) {
-      const pulse = 3 + Math.sin((state.time || 0) * 5) * 1.5;
-      ctx.fillStyle = C.marker;
-      ctx.beginPath();
-      ctx.arc(x0 + mission.marker.x * scale, y0 + mission.marker.y * scale, pulse + 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // Police dots.
-    ctx.fillStyle = C.policeDot;
-    const cars = state.cars || [];
-    for (let i = 0; i < cars.length; i += 1) {
-      if (cars[i].kind !== 'police') continue;
-      ctx.beginPath();
-      ctx.arc(x0 + cars[i].x * scale, y0 + cars[i].y * scale, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // Player arrow.
-    const player = state.player;
-    if (player) {
-      ctx.save();
-      ctx.translate(x0 + player.x * scale, y0 + player.y * scale);
-      ctx.rotate(player.angle || 0);
-      ctx.fillStyle = C.playerArrow;
-      ctx.beginPath();
-      ctx.moveTo(7, 0);
-      ctx.lineTo(-5, -5);
-      ctx.lineTo(-5, 5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
+  function ensureScene(city) {
+    if (!scene && city) scene = createScene3D(gl, city);
+    return scene;
   }
 
-  function drawPanel(title, lines, prompt, accent, top) {
-    const lineH = 32;
-    const height = 150 + lines.length * lineH + 70;
-    const width = 640;
-    const x = (VIEW_W - width) / 2;
-    const y = typeof top === 'number' ? top : (VIEW_H - height) / 2;
-    ctx.fillStyle = C.panel;
-    ctx.fillRect(x, y, width, height);
-    ctx.strokeStyle = accent || C.panelEdge;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(x, y, width, height);
-    text(title, VIEW_W / 2, y + 72, 52, C.text, 'center', 'bold');
-    for (let i = 0; i < lines.length; i += 1) {
-      text(lines[i], VIEW_W / 2, y + 128 + i * lineH, 20, C.muted, 'center');
-    }
-    text(prompt, VIEW_W / 2, y + height - 34, 22, C.accent, 'center', 'bold');
-  }
-
-  function drawTitle(state, ui) {
-    // Dim the living 3D city behind the title.
-    ctx.fillStyle = 'rgba(16, 10, 28, 0.55)';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    text('VELMORA', VIEW_W / 2, 108, 84, C.accent, 'center', 'bold');
-    text('S U N S E T   S T R E E T S', VIEW_W / 2, 146, 24, C.text, 'center', 'bold');
-    const lines = [
-      'Milo Vane, getaway driver, owes a debt he cannot pay.',
-      'Fixer Nadia Sol has five jobs that can buy his freedom.',
-      'The VPD and the Cobras will not make it easy.',
-      '',
-      'WASD / arrows — move and drive      E — enter a car, talk, buy',
-      'Mouse — aim, click to shoot          Space — punch',
-      'P / Esc — pause                      M — mute',
-    ];
-    const save = ui && ui.save;
-    const saveLine = save
-      ? 'Missions done: ' + (save.missionsDone || 0) + '    •    Best cash: ' + money(save.bestCash || 0)
-      : 'No save yet — a fresh start in Velmora.';
-    drawPanel('THE JOB', lines.concat(['', saveLine]), 'Press Enter or click to start', undefined, 176);
-  }
-
-  function drawPaused() {
-    ctx.fillStyle = 'rgba(16, 10, 28, 0.6)';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    drawPanel('PAUSED', ['The city waits for no one — except now.', 'Milo is catching his breath.'], 'Press P or Enter to keep driving');
-  }
-
-  function drawOver(state, ui) {
-    const kind = (ui && ui.overKind) || 'wasted';
-    const title = kind === 'busted' ? 'BUSTED' : 'WASTED';
-    const stats = state.stats || {};
-    const lines = [
-      kind === 'busted' ? 'Commissioner Hale\'s VPD finally caught up with Milo.' : 'Milo went down in the streets of Velmora.',
-      '',
-      'Cash: ' + money(state.player ? state.player.cash : 0) + '    •    Missions done: ' + (stats.missionsDone || 0),
-      'Cars stolen: ' + (stats.carsStolen || 0) + '    •    Takedowns: ' + (stats.kills || 0),
-    ];
-    ctx.fillStyle = 'rgba(16, 10, 28, 0.6)';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    drawPanel(title, lines, 'Press Enter or click to try again', kind === 'busted' ? C.policeBlue : C.danger);
-  }
-
-  /** Paint one frame for `screen`, over the world in `state`. */
   function draw(state, screen, ui) {
-    resize();
-    if (!scene3d && state.city && gl) {
-      scene3d = createScene3D(gl, state.city);
-    }
-    // The 3D world renders synchronously into the GL canvas first.
-    const now = performance.now();
-    const dt = lastT ? Math.min((now - lastT) / 1000, 0.1) : 0;
-    lastT = now;
-    if (scene3d) scene3d.sync(state, dt);
-    // HUD / screens in logical view space, on the transparent HUD canvas.
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, hud.width, hud.height);
-    ctx.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
+    if (!state) return;
+    const sceneNow = ensureScene(state.city);
+    if (sceneNow) sceneNow.sync(state);
+    hud.clearRect(0, 0, VIEW.width, VIEW.height);
     if (screen === SCREEN_TITLE) {
-      drawTitle(state, ui);
-      return;
+      drawTitle(hud, state, ui || {});
+    } else {
+      drawHud(hud, state, ui || {});
+      if (screen === SCREEN_PAUSED) drawPaused(hud);
+      else if (screen === SCREEN_OVER) drawOver(hud, state, ui || {});
     }
-    drawHud(state, ui);
-    if (screen === SCREEN_PAUSED) drawPaused();
-    else if (screen === SCREEN_OVER) drawOver(state, ui);
   }
 
-  /** Convert a screen point (CSS pixels relative to the canvas) to world coords. */
   function screenToWorld(sx, sy) {
-    if (scene3d) return scene3d.screenToWorld(sx, sy, view);
-    // No 3D scene yet (before the first draw): fall back to the city centre.
-    return { x: WORLD_W / 2, y: WORLD_H / 2 };
+    if (!scene) return { x: 0, y: 0 };
+    return scene.screenToWorld(sx, sy);
   }
 
-  resize();
-  window.addEventListener('resize', resize);
   return { draw, screenToWorld };
 }

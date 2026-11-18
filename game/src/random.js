@@ -1,54 +1,38 @@
-// Seeded randomness for Velmora. Every draw comes from one 32-bit state that
-// only moves forward, so the same seed always builds the same city and the
-// same traffic — that is what makes the screenshot scenes repeatable.
-// Determinism covers the 3D staging too: building heights, lamps, cranes and trees all draw from this same generator.
-//
-// The generator below is a mulberry32-style scrambler written from scratch
-// for this game: advance the state by a golden-ratio constant, xor-shift and
-// multiply it twice, and scale the top bits into [0, 1).
+// random.js — deterministic seeded RNG for VELMORA: Sunset Streets.
+// Pure module, no imports. mulberry32 gives a stable stream per seed so
+// replays, screenshots and the fixed-step loop stay identical run to run.
 
-/**
- * Build a generator from any integer seed. The returned value is a function
- * (call it for the next float in [0, 1)) that also carries a `.next` method
- * pointing at itself, so callers may use either `rng()` or `rng.next()`.
- */
 export function createRandom(seed) {
-  // Fold any seed (including 0 and negatives) into a non-zero 32-bit state.
-  let state = (seed >>> 0) ^ 0x9e3779b9;
-  if (state === 0) state = 0x85ebca6b;
-
+  let a = (seed >>> 0) || 0x9e3779b9;
   function next() {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = state;
-    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-
-  next.next = next;
-  next.seed = seed >>> 0;
-  return next;
+  function int(min, max) {
+    const lo = Math.ceil(min);
+    const hi = Math.floor(max);
+    if (hi <= lo) return lo;
+    return lo + Math.floor(next() * (hi - lo + 1));
+  }
+  function pick(arr) {
+    if (!arr || arr.length === 0) return undefined;
+    return arr[Math.floor(next() * arr.length)];
+  }
+  return { next, int, pick };
 }
 
-/** Pull the next float in [0, 1) from a generator made by createRandom. */
-function draw(rng) {
-  if (typeof rng === 'function') return rng();
-  return rng.next();
+export function randInt(rng, min, max) {
+  if (rng && typeof rng.int === 'function') return rng.int(min, max);
+  const lo = Math.ceil(min);
+  const hi = Math.floor(max);
+  if (hi <= lo) return lo;
+  return lo + Math.floor(rng.next() * (hi - lo + 1));
 }
 
-/** An integer in [a, b], both ends inclusive. */
-export function randInt(rng, a, b) {
-  const lo = Math.min(a, b);
-  const hi = Math.max(a, b);
-  return lo + Math.floor(draw(rng) * (hi - lo + 1));
-}
-
-/** A float in [a, b). */
-export function randFloat(rng, a, b) {
-  return a + draw(rng) * (b - a);
-}
-
-/** One element of a non-empty array, uniformly. */
 export function pick(rng, arr) {
-  return arr[Math.floor(draw(rng) * arr.length)];
+  if (!arr || arr.length === 0) return undefined;
+  if (rng && typeof rng.pick === 'function') return rng.pick(arr);
+  return arr[Math.floor(rng.next() * arr.length)];
 }

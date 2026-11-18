@@ -1,291 +1,231 @@
-// Boot and the one loop: input is read once per frame, the world advances in fixed
-// 1/60 s steps (several in a slow frame, none in a fast one), and the renderer paints
-// what is there. The game moves between four screens: title, play, paused, game over.
-//
-// ?seed=N fixes the city and traffic. ?shot=cover|chase|mission|start (with &seed=N)
-// stages that scene instead of running the loop, paints it twice and sets
-// window.__shotReady for a screenshot.
-import {
-  EVENT_BUSTED, EVENT_CRASH, EVENT_HIT, EVENT_MISSION, EVENT_MISSION_DONE,
-  EVENT_PICKUP, EVENT_PUNCH, EVENT_SHOT, EVENT_STEAL, EVENT_WANTED_DOWN,
-  EVENT_WANTED_UP, EVENT_WASTED, STEP,
-} from './config.js';
+// main.js — boot and game loop for VELMORA: Sunset Streets (3D).
+// Parses ?shot and ?seed, builds the seeded world, wires the renderer,
+// input, audio and save together, and runs the fixed 1/60 s loop.
+// The 3D view itself lives in render.js (which owns scene3d.js); this
+// file never imports scene3d directly.
+
+import { STEP, CAMERA3D, EVENT_SHOT, EVENT_PUNCH, EVENT_PICKUP, EVENT_CRASH, EVENT_WANTED_UP, EVENT_WANTED_DOWN, EVENT_MISSION, EVENT_MISSION_DONE, EVENT_BUSTED, EVENT_WASTED, EVENT_STEAL, EVENT_HIT } from './config.js';
 import { createRandom } from './random.js';
 import { createCity } from './city.js';
 import { createWorld } from './world.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { loadSave, saveGame } from './save.js';
-import { MISSIONS, startMission } from './missions.js';
-import { stageShot } from './shots.js';
+import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_OVER } from './render.js';
+import { createInput } from './input.js';
+// shots.js is loaded dynamically below so the boot works whether it
+// exports stageShot as its default or as a named export.
 
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
-const MAX_FRAME = 0.25;
-/** How long a mission card stays on screen, in milliseconds. */
-const MESSAGE_MS = 4500;
+const statusEl = document.getElementById('status');
+const params = new URLSearchParams(location.search);
+const shotName = params.get('shot');
+const seedParam = Number(params.get('seed'));
+const seed = Number.isFinite(seedParam) && seedParam !== 0 ? Math.floor(Math.abs(seedParam)) : 20261118;
 
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+const saved = loadSave();
+const audio = createAudio();
+if (saved && saved.muted) audio.setMuted(true);
 
-const canvas = document.getElementById('game');
-const glCanvas = document.getElementById('gl');
-const status = document.getElementById('status');
-const rng = createRandom(seed);
-const city = createCity(rng);
-const world = createWorld(rng, city);
-// 3D renderer: WebGL canvas ('gl', three.js scene) + the 2D HUD canvas ('game').
-const renderer = createRenderer(glCanvas, canvas);
+const canvas = document.getElementById('gl') || document.getElementById('game') || document.querySelector('canvas');
+const renderer = createRenderer(canvas);
+const world = createWorld(createRandom(seed), createCity(createRandom(seed + 7)));
+const input = createInput(canvas, renderer.screenToWorld.bind(renderer));
 
-let save = null;
-try {
-  save = loadSave();
-} catch {
-  save = null;
-}
-// Saved 3D camera preference: apply on start (startGame re-applies after reset).
-if (save && save.camera) {
-  world.state.camera.mode = save.camera.mode;
-  world.state.camera.dist = save.camera.dist;
-  world.state.camera.locked = true;
+// Restore the saved camera and cash; missions restart from the beginning.
+let bestCash = saved ? saved.bestCash : 0;
+if (saved) {
+  world.state.player.cash = Math.max(world.state.player.cash, saved.cash || 0);
+  if (saved.camera) {
+    world.state.camera.mode = saved.camera.mode;
+    world.state.camera.dist = saved.camera.dist;
+    world.state.camera.locked = true;
+  }
 }
 
-function runShot(name) {
-  const scene = stageShot(name, world);
-  const ui = { best: scene.best, save, message: null, overKind: null };
-  let painted = 0;
-  function paint() {
-    renderer.draw(world.state, scene.screen, ui);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
-  }
-  requestAnimationFrame(paint);
+let screen = SCREEN_TITLE;
+let overKind = null;
+let message = '';
+let messageTimer = 0;
+let uiSave = saved;
+let accumulator = 0;
+let lastTime = performance.now();
+let shotStaged = false;
+
+function announce(text) {
+  message = text;
+  messageTimer = 4;
+  if (statusEl) statusEl.textContent = text;
 }
 
-function runGame() {
-  const input = createInput(canvas);
-  const audio = createAudio();
-  if (save && save.muted) audio.setMuted(true);
-  let screen = SCREEN_TITLE;
-  let best = (save && save.bestCash) || 0;
-  // Jobs finished across visits: the world resets its own stats on every
-  // start, so this counter lives here and survives world.reset().
-  let missionsDone = (save && save.missionsDone) || 0;
-  let overKind = null;
-  let message = null;
-  let messageUntil = 0;
-  let accumulator = 0;
-  let last = performance.now();
+function persist() {
+  const state = world.state;
+  bestCash = Math.max(bestCash, state.player.cash);
+  const record = {
+    missionsDone: state.stats.missionsDone,
+    cash: state.player.cash,
+    bestCash,
+    muted: audio.muted,
+    camera: { mode: state.camera.mode, dist: state.camera.dist },
+  };
+  saveGame(record);
+  uiSave = record;
+}
 
-  // Screen readers (and anyone watching the page's text) hear the screen changes.
-  function announce(text) {
-    status.textContent = text;
+function applyCameraInput(inp) {
+  const cam = world.state.camera;
+  if (inp.zoomDelta) {
+    cam.dist = Math.max(160, Math.min(1400, cam.dist + inp.zoomDelta * -40));
+    cam.locked = true;
   }
-
-  function persist() {
-    const state = world.state;
-    const cash = Math.round(state.player.cash || 0);
-    if (cash > best) best = cash;
-    try {
-      saveGame({
-        missionsDone,
-        cash,
-        bestCash: best,
-        muted: audio.muted,
-        camera: { mode: state.camera.mode, dist: state.camera.dist },
-      });
-    } catch {
-      // Storage can be off (private windows): progress then lasts this visit only.
-    }
+  if (inp.camCycle) {
+    const order = ['follow', 'chase', 'high'];
+    const idx = order.indexOf(cam.mode);
+    cam.mode = order[(idx + 1) % order.length];
+    const preset = CAMERA3D[cam.mode];
+    if (preset) cam.dist = preset.dist;
+    cam.locked = true;
+    announce('Camera: ' + cam.mode);
   }
+}
 
-  function showMessage(text) {
-    message = text;
-    messageUntil = performance.now() + MESSAGE_MS;
+function handleEvents(flags) {
+  if (!flags) return;
+  const p = world.state.player;
+  if (flags & EVENT_SHOT) audio.sfx('shot');
+  if (flags & EVENT_PUNCH) audio.sfx('punch');
+  if (flags & EVENT_CRASH) audio.sfx('crash');
+  if (flags & EVENT_STEAL) {
+    audio.sfx('steal');
+    announce('Car stolen — the VPD has been tipped off.');
   }
-
-  function startGame() {
-    world.reset();
-    // Restore the saved 3D camera preference (reset() returns it to follow/260).
-    if (save && save.camera) {
-      world.state.camera.mode = save.camera.mode;
-      world.state.camera.dist = save.camera.dist;
-      world.state.camera.locked = true;
-    }
-    // Resume the story where the save left it (replay the finale once done).
-    startMission(world.state, Math.min(missionsDone, MISSIONS.length - 1));
-    accumulator = 0;
-    overKind = null;
-    message = null;
-    screen = SCREEN_PLAY;
-    audio.ensure();
-    audio.musicStart();
-    announce('Playing. Milo is on the streets of Velmora.');
+  if (flags & EVENT_PICKUP) {
+    audio.sfx('pickup');
+    announce('Picked up — cash $' + p.cash + '.');
   }
-
-  function endGame(kind) {
-    overKind = kind;
+  if (flags & EVENT_HIT) audio.sfx('crash');
+  if (flags & EVENT_WANTED_UP) {
+    audio.sfx('siren');
+    announce('Wanted level ' + p.wanted + ' — VPD on your tail!');
+  }
+  if (flags & EVENT_WANTED_DOWN) announce('Heat dying down — wanted level ' + p.wanted + '.');
+  if (flags & EVENT_MISSION) {
+    audio.sfx('mission');
+    announce(world.state.mission.objective || 'New objective.');
+  }
+  if (flags & EVENT_MISSION_DONE) {
+    audio.sfx('cash');
+    announce(world.state.mission.objective || 'Mission complete!');
+    persist();
+  }
+  if (flags & EVENT_BUSTED) {
+    audio.sfx('busted');
+    overKind = 'busted';
     screen = SCREEN_OVER;
     persist();
-    audio.musicStop();
-    announce(kind === 'busted'
-      ? 'Busted. The VPD took Milo in. Cash ' + Math.round(world.state.player.cash || 0) + '. Best ' + best + '.'
-      : 'Wasted. Milo went down. Cash ' + Math.round(world.state.player.cash || 0) + '. Best ' + best + '.');
   }
-
-  function handleEvents(events) {
-    if (!events) return;
-    // Shot / punch / pickup sounds are positional, heard from Milo's spot.
-    const px = world.state.player.x;
-    const py = world.state.player.y;
-    if (events & EVENT_SHOT) audio.sfxAt('shot', px, py, px, py);
-    if (events & EVENT_PUNCH) audio.sfxAt('punch', px, py, px, py);
-    if (events & EVENT_PICKUP) {
-      audio.sfxAt('pickup', px, py, px, py);
-      announce('Picked up. Cash ' + Math.round(world.state.player.cash || 0) + '.');
-    }
-    if (events & EVENT_CRASH) audio.sfx('crash');
-    if (events & EVENT_STEAL) {
-      audio.sfx('steal');
-      announce('Car stolen. The heat is on.');
-    }
-    if (events & EVENT_HIT) announce('Milo took a hit. Health ' + Math.round(world.state.player.health || 0) + '.');
-    if (events & EVENT_WANTED_UP) {
-      audio.sfx('siren');
-      announce('Wanted level ' + (world.state.player.wanted || 0) + '. Lose the cops.');
-    }
-    if (events & EVENT_WANTED_DOWN) announce('The heat is dying down.');
-    if (events & EVENT_MISSION) {
-      audio.sfx('mission');
-      const objective = world.state.mission && world.state.mission.objective;
-      showMessage(objective ? 'New job — ' + objective : 'New job from Nadia.');
-      announce('New job: ' + (objective || ''));
-    }
-    if (events & EVENT_MISSION_DONE) {
-      audio.sfx('cash');
-      missionsDone += 1;
-      showMessage('Job complete — Nadia pays up.');
-      announce('Job complete. Missions done: ' + missionsDone + '.');
-      persist();
-    }
-    if (events & EVENT_BUSTED) {
-      audio.sfx('busted');
-      endGame('busted');
-    } else if (events & EVENT_WASTED) {
-      audio.sfx('wasted');
-      endGame('wasted');
-    }
+  if (flags & EVENT_WASTED) {
+    audio.sfx('wasted');
+    overKind = 'wasted';
+    screen = SCREEN_OVER;
+    persist();
   }
-
-  // Idle input for the ambient city behind the title screen.
-  function idleWorldInput() {
-    return {
-      mx: 0, my: 0, accel: 0, steer: 0,
-      enter: false, shoot: false, punch: false, confirm: false, pause: false, mute: false,
-      mouse: { x: 0, y: 0, down: false },
-    };
-  }
-
-  function frame(now) {
-    requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-    const raw = input.read();
-
-    // Mute is global: it works on every screen and is remembered in the save.
-    if (raw.mute) {
-      audio.ensure();
-      audio.setMuted(!audio.muted);
-      persist();
-      announce(audio.muted ? 'Muted.' : 'Sound on.');
-    }
-
-    // 3D camera controls. C cycles follow -> chase -> high: the chosen mode
-    // is locked (step() will not auto-switch it) and saved as a preference.
-    // The mouse wheel zooms the camera distance, clamped to 160..1400.
-    if (raw.camToggle && screen === SCREEN_PLAY) {
-      const modes = ['follow', 'chase', 'high'];
-      const next = modes[(modes.indexOf(world.state.camera.mode) + 1) % modes.length];
-      world.state.camera.mode = next;
-      world.state.camera.locked = true;
-      persist();
-      announce('Camera: ' + next + '.');
-    }
-    if (raw.zoom) {
-      world.state.camera.dist = Math.max(160, Math.min(1400,
-        world.state.camera.dist + raw.zoom * 0.5));
-    }
-
-    // Screen transitions from the edge flags of this frame's input.
-    let justStarted = false;
-    if (raw.confirm && (screen === SCREEN_TITLE || screen === SCREEN_OVER)) {
-      startGame();
-      justStarted = true;
-    } else if (raw.pause && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if ((raw.pause || raw.confirm) && screen === SCREEN_PAUSED) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
-    }
-
-    // The input the world sees: mouse converted from screen coords to world coords.
-    // A press made on the title screen must not act on the first play frame.
-    const aim = renderer.screenToWorld(raw.mouse.x, raw.mouse.y);
-    const worldInput = {
-      mx: raw.mx, my: raw.my, accel: raw.accel, steer: raw.steer,
-      enter: justStarted ? false : raw.enter,
-      shoot: justStarted ? false : raw.shoot,
-      punch: justStarted ? false : raw.punch,
-      confirm: false, pause: false, mute: false,
-      mouse: { x: aim.x, y: aim.y, down: justStarted ? false : raw.mouse.down },
-    };
-
-    if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
-      let firstStep = true;
-      while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
-        if (screen === SCREEN_TITLE) {
-          world.step(STEP, idleWorldInput());
-        } else {
-          const events = world.step(STEP, worldInput);
-          handleEvents(events);
-          if (!firstStep) {
-            // Edge flags fire once per frame, not once per fixed step.
-            worldInput.enter = false;
-            worldInput.punch = false;
-          }
-          firstStep = false;
-        }
-        accumulator -= STEP;
-      }
-      // Engine hum + siren follow the live state while playing.
-      if (screen === SCREEN_PLAY) {
-        const player = world.state.player;
-        audio.engine(player.car ? Math.abs(player.car.speed || 0) : 0, !player.onFoot);
-        audio.siren((player.wanted || 0) > 0);
-      }
-    } else {
-      accumulator = 0;
-    }
-
-    if (message && now > messageUntil) message = null;
-    renderer.draw(world.state, screen, { best, save, message, overKind });
-  }
-
-  // Leaving the tab pauses a running game rather than letting the city move unseen.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    }
-  });
-
-  announce('Velmora Sunset Streets. Press Enter or click to start.');
-  requestAnimationFrame(frame);
 }
 
-if (shot) runShot(shot);
-else runGame();
+function drawFrame() {
+  const ui = {
+    best: bestCash,
+    save: uiSave,
+    message: messageTimer > 0 ? message : '',
+    overKind,
+  };
+  renderer.draw(world.state, screen, ui);
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const elapsed = Math.min(0.25, (now - lastTime) / 1000);
+  lastTime = now;
+  const inp = input.read();
+
+  if (inp.mute) {
+    audio.setMuted(!audio.muted);
+    announce(audio.muted ? 'Sound muted.' : 'Sound on.');
+  }
+  if (screen === SCREEN_PLAY && inp.pause) {
+    screen = SCREEN_PAUSED;
+    audio.musicStop();
+    audio.siren(false);
+    announce('Paused — press P to resume.');
+  } else if (screen === SCREEN_PAUSED && (inp.pause || inp.confirm)) {
+    screen = SCREEN_PLAY;
+    message = '';
+    messageTimer = 0;
+    if (statusEl) statusEl.textContent = '';
+    audio.ensure();
+    audio.musicStart();
+  }
+
+  if (screen === SCREEN_TITLE) {
+    if (inp.confirm) {
+      screen = SCREEN_PLAY;
+      audio.ensure();
+      audio.musicStart();
+      announce(world.state.mission.objective || 'Welcome to Velmora.');
+    }
+  } else if (screen === SCREEN_PLAY) {
+    applyCameraInput(inp);
+    accumulator += elapsed;
+    let guard = 0;
+    let stepInput = inp;
+    while (accumulator >= STEP && guard < 8) {
+      accumulator -= STEP;
+      guard += 1;
+      const flags = world.step(STEP, stepInput);
+      handleEvents(flags);
+      if (screen !== SCREEN_PLAY) break;
+      // Edge flags fire once: later catch-up steps in this frame see them off.
+      stepInput = { ...inp, enter: false, shoot: false, punch: false, confirm: false, pause: false, mute: false, camCycle: false, zoomDelta: 0 };
+    }
+    if (guard >= 8) accumulator = 0;
+    if (messageTimer > 0) messageTimer -= elapsed;
+    const p = world.state.player;
+    audio.engine(p.speed, !p.onFoot);
+    audio.siren(p.wanted > 0 && screen === SCREEN_PLAY);
+  } else if (screen === SCREEN_OVER) {
+    if (inp.confirm) {
+      world.reset();
+      overKind = null;
+      screen = SCREEN_TITLE;
+      bestCash = Math.max(bestCash, 0);
+    }
+  }
+
+  drawFrame();
+}
+
+async function bootShot() {
+  const mod = await import('./shots.js');
+  const stageShot = mod.default || mod.stageShot;
+  const staged = stageShot(shotName, world);
+  screen = staged.screen || SCREEN_TITLE;
+  if (staged.best) bestCash = staged.best;
+  if (world.state.camera) world.state.camera.locked = true;
+  drawFrame();
+  drawFrame();
+  window.__shotReady = true;
+  shotStaged = true;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && screen === SCREEN_PLAY) {
+    screen = SCREEN_PAUSED;
+    audio.musicStop();
+    audio.siren(false);
+  }
+});
+
+if (shotName) {
+  bootShot();
+} else {
+  void shotStaged;
+  requestAnimationFrame(frame);
+}

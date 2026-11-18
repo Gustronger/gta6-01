@@ -1,197 +1,302 @@
-// VELMORA — Sunset Streets: story missions.
-//
-// Five story jobs handed out by fixer Nadia Sol. Each def describes its steps
-// in plain data; startMission plants the mission on the world state and
-// updateMission watches the state each step and advances it. This module only
-// reads and writes the state shape from DESIGN.md — it never spawns traffic,
-// police or enemies itself. The world module is responsible for putting the
-// right actors in the world when a mission starts (4 Cobras at the Docks for
-// mission 3, the gold sport car Downtown for mission 5).
-import { EVENT_MISSION, EVENT_MISSION_DONE } from './config.js';
+// missions.js — the five story jobs Nadia Sol hands Milo Vane in Velmora.
+// Step coordinates are never hardcoded: startMission derives every marker
+// from the live city (garages, hideout, docks and marina quarters), so the
+// same definitions work on any seeded city layout.
 
-// Road lines from the city grid; every marker below sits on an intersection
-// of two of these lines so it is always reachable by road.
-const DOWNTOWN_GARAGE = { x: 2912, y: 1120 }; // NE Downtown
-const DOCKS_PICKUP = { x: 3360, y: 2912 }; // SE Docks
-const MARINA_DROP_A = { x: 1120, y: 3808 }; // SW Marina, by the beach
-const DOCKS_YARD = { x: 2912, y: 2912 }; // SE Docks
-const DOCKS_DEAL = { x: 3360, y: 3360 }; // SE Docks, container yard
-const HIDEOUT = { x: 672, y: 672 }; // NW Old Town
-const AURORA_SPOT = { x: 2464, y: 672 }; // NE Downtown
-const MARINA_DROP_B = { x: 1568, y: 3808 }; // SW Marina, boardwalk
+import {
+  EVENT_MISSION,
+  EVENT_MISSION_DONE,
+  EVENT_WANTED_UP,
+} from './config.js';
 
 export const MISSIONS = [
   {
-    id: 'first-wheels',
+    id: 1,
     title: 'First Wheels',
-    briefing:
-      "Nadia Sol: 'Milo, you owe, I collect. First job is simple — lift a car, any car, and bring it to my garage Downtown. Don't scratch it more than it already is.'",
+    briefing: 'Nadia needs wheels. Steal any car and bring it to her garage in Downtown.',
     reward: 300,
-    landmark: "Nadia's garage",
     steps: [
-      { text: 'Steal a car', type: 'steal', x: DOWNTOWN_GARAGE.x, y: DOWNTOWN_GARAGE.y, radius: 120 },
-      { text: "Drive to Nadia's garage in Downtown", type: 'goto', x: DOWNTOWN_GARAGE.x, y: DOWNTOWN_GARAGE.y, radius: 120 },
+      { text: 'Steal any car', type: 'steal', x: 0, y: 0, radius: 90 },
+      { text: "Drive to Nadia's garage in Downtown", type: 'goto', x: 0, y: 0, radius: 110 },
     ],
   },
   {
-    id: 'payday-run',
+    id: 2,
     title: 'Payday Run',
-    briefing:
-      "Nadia Sol: 'A package is waiting at the Docks. Pick it up and run it to the Marina. The VPD will be on you the moment you grab it — don't stop, don't get cute.'",
+    briefing: 'Pick up the package at the Docks and deliver it to the Marina. The VPD will be watching.',
     reward: 600,
-    landmark: 'the docks cranes',
-    // Seconds allowed for the delivery leg, counted from the pickup.
-    timeLimit: 150,
     steps: [
-      { text: 'Pick up the package at the Docks', type: 'goto', x: DOCKS_PICKUP.x, y: DOCKS_PICKUP.y, radius: 100 },
-      { text: 'Deliver the package to the Marina', type: 'deliver', x: MARINA_DROP_A.x, y: MARINA_DROP_A.y, radius: 120 },
+      { text: 'Pick up the package at the Docks', type: 'goto', x: 0, y: 0, radius: 110 },
+      { text: 'Deliver the package to the Marina', type: 'deliver', x: 0, y: 0, radius: 110 },
     ],
   },
   {
-    id: 'dockside-deal',
+    id: 3,
     title: 'Dockside Deal',
-    briefing:
-      "Nadia Sol: 'The Cobras skimmed my cut at the Docks. Go down there, put four of them on the ground, and bring me the cash they were sitting on.'",
+    briefing: 'The Cobras are holding Nadia\'s cash at the Docks. Clear them out and collect it.',
     reward: 900,
-    landmark: 'the container yard',
     steps: [
-      { text: 'Go to the Docks', type: 'goto', x: DOCKS_YARD.x, y: DOCKS_YARD.y, radius: 150 },
-      { text: 'Eliminate 4 Cobras', type: 'eliminate', x: DOCKS_DEAL.x, y: DOCKS_DEAL.y, radius: 200, count: 4 },
-      { text: 'Collect the cash', type: 'goto', x: DOCKS_DEAL.x, y: DOCKS_DEAL.y, radius: 100 },
+      { text: 'Reach the Docks', type: 'goto', x: 0, y: 0, radius: 130 },
+      { text: 'Eliminate the Cobras (4)', type: 'eliminate', x: 0, y: 0, radius: 260, count: 4 },
+      { text: 'Collect the cash', type: 'goto', x: 0, y: 0, radius: 90 },
     ],
   },
   {
-    id: 'the-getaway',
+    id: 4,
     title: 'The Getaway',
-    briefing:
-      "Nadia Sol: 'Commissioner Hale put three stars on your head, Milo. Shake every last cop, then get to the hideout in Old Town before they box you in. The clock is running.'",
+    briefing: 'Three stars and no way out but speed. Lose the VPD, then reach the hideout before the trail goes cold.',
     reward: 1200,
-    landmark: 'the Old Town hideout',
-    // Whole escape must be finished inside this window.
-    timeLimit: 180,
     steps: [
-      { text: 'Lose the cops — get your wanted level to zero', type: 'escape', x: HIDEOUT.x, y: HIDEOUT.y, radius: 150 },
-      { text: 'Reach the hideout in Old Town', type: 'goto', x: HIDEOUT.x, y: HIDEOUT.y, radius: 120 },
+      { text: 'Lose the wanted level', type: 'escape', x: 0, y: 0, radius: 0 },
+      { text: 'Reach the hideout in time', type: 'goto', x: 0, y: 0, radius: 110 },
     ],
   },
   {
-    id: 'harbor-lights',
+    id: 5,
     title: 'Harbor Lights',
-    briefing:
-      "Nadia Sol: 'Last one, and it's the big one. A gold Aurora GT is parked Downtown — the only one in Velmora. Steal it and bring it to the Marina. Do this and your debt is gone.'",
+    briefing: 'The gold Aurora GT is parked in Downtown. Take it and deliver it to the Marina. No scratches.',
     reward: 2500,
-    landmark: 'the Downtown towers',
     steps: [
-      { text: 'Steal the gold Aurora GT in Downtown', type: 'steal', x: AURORA_SPOT.x, y: AURORA_SPOT.y, radius: 120 },
-      { text: 'Deliver the Aurora GT to the Marina', type: 'deliver', x: MARINA_DROP_B.x, y: MARINA_DROP_B.y, radius: 120 },
+      { text: 'Steal the gold Aurora GT in Downtown', type: 'steal', x: 0, y: 0, radius: 110 },
+      { text: 'Deliver the Aurora GT to the Marina', type: 'deliver', x: 0, y: 0, radius: 110 },
     ],
   },
 ];
 
-function distance(ax, ay, bx, by) {
+function dist(ax, ay, bx, by) {
   const dx = ax - bx;
   const dy = ay - by;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// 3D beacon for the current mission marker: a tall pulsing column the
-// renderer draws over the marker. Null when no mission marker is active.
-export function markerBeacon(state) {
-  if (!state || !state.mission || !state.mission.marker) return null;
-  const marker = state.mission.marker;
-  const time = (state && typeof state.time === 'number') ? state.time : 0;
-  return {
-    x: marker.x,
-    y: marker.y,
-    height: 120,
-    pulse: (Math.sin(time * 5) + 1) / 2,
-  };
+function nearestTo(list, x, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (const item of list || []) {
+    const d = dist(item.x, item.y, x, y);
+    if (d < bestD) {
+      bestD = d;
+      best = item;
+    }
+  }
+  return best;
 }
 
-// Plant mission `index` on the state: objective, marker, timer and the kill
-// baseline the eliminate step measures against. Wanted is set here for the
-// two chases: 2 stars for the Payday Run, 3 for the Getaway.
+// Quarter centres of the 4096x4096 world: NW Old Town, NE Downtown,
+// SW Marina, SE Docks. Used only to pick city features by neighbourhood.
+const QUARTERS = {
+  downtown: { x: 3072, y: 1024 },
+  docks: { x: 3072, y: 3072 },
+  marina: { x: 1024, y: 3072 },
+  oldtown: { x: 1024, y: 1024 },
+};
+
+function garageNear(city, quarter) {
+  const g = nearestTo(city.garages || [], quarter.x, quarter.y);
+  return g ? { x: g.x, y: g.y } : { x: quarter.x, y: quarter.y };
+}
+
+function hideoutPoint(city) {
+  if (city.hideout) return { x: city.hideout.x, y: city.hideout.y };
+  return { x: QUARTERS.oldtown.x, y: QUARTERS.oldtown.y };
+}
+
+function roadPointNear(city, quarter) {
+  if (city.roads && city.roads.length) {
+    const road = nearestTo(
+      city.roads.map((r) => ({ x: (r.x1 + r.x2) / 2, y: (r.y1 + r.y2) / 2 })),
+      quarter.x,
+      quarter.y,
+    );
+    if (road) return { x: road.x, y: road.y };
+  }
+  return { x: quarter.x, y: quarter.y };
+}
+
+function freshMission() {
+  return { index: -1, step: 0, objective: '', marker: null, timer: 0, progress: 0, spawned: false };
+}
+
 export function startMission(state, index) {
-  if (!state || !state.player || !state.mission) return 0;
   const def = MISSIONS[index];
-  if (!def) return 0;
-  if (index === 1) state.player.wanted = 2;
-  if (index === 3) state.player.wanted = 3;
-  state.mission.index = index;
-  state.mission.step = 0;
-  state.mission.objective = def.steps[0].text;
-  state.mission.marker = { x: def.steps[0].x, y: def.steps[0].y };
-  // Mission 4's clock runs from the start; mission 2's starts at the pickup.
-  state.mission.timer = index === 3 ? def.timeLimit || 0 : 0;
-  state.mission.killsStart = state.stats ? state.stats.kills || 0 : 0;
-  return EVENT_MISSION;
+  if (!def || !state || !state.city) return;
+  const city = state.city;
+  const downtownGarage = garageNear(city, QUARTERS.downtown);
+  const docksPoint = roadPointNear(city, QUARTERS.docks);
+  const marinaPoint = roadPointNear(city, QUARTERS.marina);
+  const hideout = hideoutPoint(city);
+
+  const steps = def.steps.map((s) => ({ ...s }));
+  if (def.id === 1) {
+    steps[1].x = downtownGarage.x;
+    steps[1].y = downtownGarage.y;
+  } else if (def.id === 2) {
+    steps[0].x = docksPoint.x;
+    steps[0].y = docksPoint.y;
+    steps[1].x = marinaPoint.x;
+    steps[1].y = marinaPoint.y;
+  } else if (def.id === 3) {
+    steps[0].x = docksPoint.x;
+    steps[0].y = docksPoint.y;
+    steps[1].x = docksPoint.x;
+    steps[1].y = docksPoint.y;
+    steps[2].x = docksPoint.x + 140;
+    steps[2].y = docksPoint.y + 60;
+  } else if (def.id === 4) {
+    steps[1].x = hideout.x;
+    steps[1].y = hideout.y;
+  } else if (def.id === 5) {
+    steps[0].x = downtownGarage.x;
+    steps[0].y = downtownGarage.y;
+    steps[1].x = marinaPoint.x;
+    steps[1].y = marinaPoint.y;
+  }
+
+  state.mission = {
+    index,
+    step: 0,
+    objective: steps[0].text,
+    marker: steps[0].type === 'steal' && def.id !== 5 ? null : { x: steps[0].x, y: steps[0].y },
+    timer: 0,
+    progress: 0,
+    spawned: false,
+    steps,
+  };
+  // Mission 4 opens hot: three stars from the first second.
+  if (def.id === 4) {
+    state.player.wanted = 3;
+  }
+  // Mission 2: the heat turns up once the package is picked up.
+  if (def.id === 2) {
+    state.mission.chaseOnPickup = true;
+  }
 }
 
-// Advance the active mission one step if its condition is met, pay out and
-// auto-advance when the last step clears. Returns EVENT_* flags.
-export function updateMission(state, dt) {
-  if (!state || !state.mission || !state.player) return 0;
-  const index = state.mission.index;
-  if (index < 0 || index >= MISSIONS.length) return 0;
-  const def = MISSIONS[index];
+function advanceStep(state) {
+  const m = state.mission;
+  m.step += 1;
+  m.progress = 0;
+  m.spawned = false;
+  if (m.step >= m.steps.length) return false;
+  const next = m.steps[m.step];
+  m.objective = next.text;
+  m.marker = { x: next.x, y: next.y };
+  if (next.type === 'deliver') m.timer = 75;
+  if (next.type === 'escape') m.timer = 90;
+  return true;
+}
 
-  // A running clock that hits zero restarts the mission from its briefing.
-  if (state.mission.timer > 0) {
-    state.mission.timer -= dt;
-    if (state.mission.timer <= 0) {
-      state.mission.timer = 0;
-      startMission(state, index);
+function spawnMissionEnemies(state, step) {
+  const count = step.count || 4;
+  const baseX = step.x;
+  const baseY = step.y;
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    state.enemies.push({
+      x: baseX + Math.cos(a) * 120,
+      y: baseY + Math.sin(a) * 120,
+      angle: a,
+      hp: 60,
+      weapon: 'pistol',
+      state: 'chase',
+      shootTimer: 1 + i * 0.4,
+    });
+  }
+  state.mission.spawned = true;
+}
+
+export function updateMission(state, dt) {
+  if (!state || !state.mission) return 0;
+  const m = state.mission;
+  if (m.index < 0 || m.index >= MISSIONS.length) return 0;
+  if (m.step >= m.steps.length) return 0;
+  const def = MISSIONS[m.index];
+  const step = m.steps[m.step];
+  let flags = 0;
+  const p = state.player;
+
+  if (m.timer > 0) {
+    m.timer -= dt;
+    if (m.timer <= 0) {
+      // Out of time: the job falls through and Nadia stops waiting.
+      state.mission = freshMission();
+      state.mission.objective = 'Mission failed — the window closed.';
       return EVENT_MISSION;
     }
   }
 
-  const step = def.steps[state.mission.step];
-  if (!step) return 0;
-  let done = false;
-  if (step.type === 'goto' || step.type === 'deliver') {
-    done = distance(state.player.x, state.player.y, step.x, step.y) <= step.radius;
-  } else if (step.type === 'steal') {
-    const car = state.player.car;
-    // Harbor Lights needs the Aurora GT specifically: the gold sport car.
-    // Any other steal just needs to be behind the wheel of something.
-    if (index === 4) done = !!car && car.kind === 'sport';
-    else done = !!car;
+  if (step.type === 'steal') {
+    if (p.car) {
+      if (def.id === 5) {
+        // The Aurora GT is the gold sport car: only that steal counts.
+        if (p.car.kind === 'sport') {
+          if (advanceStep(state)) flags |= EVENT_MISSION;
+        }
+      } else if (advanceStep(state)) {
+        flags |= EVENT_MISSION;
+      }
+    } else if (m.marker) {
+      // Keep the beacon on the target car while the player is on foot.
+      m.marker = { x: step.x, y: step.y };
+    }
+  } else if (step.type === 'goto' || step.type === 'deliver') {
+    if (dist(p.x, p.y, step.x, step.y) < step.radius) {
+      if (def.id === 2 && m.step === 0) {
+        // Picked up: the VPD is now on the tail for the delivery leg.
+        p.wanted = Math.max(p.wanted, 2);
+        flags |= EVENT_WANTED_UP;
+      }
+      if (advanceStep(state)) {
+        flags |= EVENT_MISSION;
+      } else {
+        flags |= completeMission(state, def);
+      }
+    }
   } else if (step.type === 'eliminate') {
-    const kills = state.stats ? state.stats.kills || 0 : 0;
-    const start = state.mission.killsStart || 0;
-    done = kills - start >= (step.count || 1);
+    if (!m.spawned) spawnMissionEnemies(state, step);
+    const alive = state.enemies.filter((e) => e.hp > 0).length;
+    m.progress = (step.count || 4) - alive;
+    if (alive === 0) {
+      if (advanceStep(state)) flags |= EVENT_MISSION;
+    }
   } else if (step.type === 'escape') {
-    done = (state.player.wanted || 0) <= 0;
-  }
-  if (!done) return 0;
-
-  state.mission.step += 1;
-  if (state.mission.step >= def.steps.length) {
-    const reward = def.reward || 0;
-    state.player.cash = (state.player.cash || 0) + reward;
-    if (state.stats) {
-      state.stats.cashEarned = (state.stats.cashEarned || 0) + reward;
-      state.stats.missionsDone = (state.stats.missionsDone || 0) + 1;
+    if (p.wanted === 0) {
+      if (advanceStep(state)) {
+        // The hideout leg is timed: 60 seconds once the heat is off.
+        if (def.id === 4) m.timer = 60;
+        flags |= EVENT_MISSION;
+      }
     }
-    const next = index + 1;
-    if (next < MISSIONS.length) {
-      startMission(state, next);
-      return EVENT_MISSION_DONE | EVENT_MISSION;
-    }
-    state.mission.index = MISSIONS.length;
-    state.mission.step = 0;
-    state.mission.objective = 'All missions complete — Velmora is yours.';
-    state.mission.marker = null;
-    state.mission.timer = 0;
-    return EVENT_MISSION_DONE;
   }
 
-  const nextStep = def.steps[state.mission.step];
-  state.mission.objective = nextStep.text;
-  state.mission.marker = { x: nextStep.x, y: nextStep.y };
-  // The Payday Run delivery clock starts the moment the package is picked up.
-  if (index === 1 && nextStep.type === 'deliver') {
-    state.mission.timer = def.timeLimit || 150;
+  // A step that just finished the last entry completes the mission.
+  if (m.step >= m.steps.length && flags === 0) {
+    flags |= completeMission(state, def);
   }
-  return EVENT_MISSION;
+  return flags;
+}
+
+function completeMission(state, def) {
+  const m = state.mission;
+  state.player.cash += def.reward;
+  state.stats.cashEarned += def.reward;
+  state.stats.missionsDone += 1;
+  state.mission = {
+    index: m.index,
+    step: m.steps.length,
+    objective: def.title + ' complete — $' + def.reward + ' earned.',
+    marker: null,
+    timer: 0,
+    progress: 0,
+    spawned: false,
+    steps: m.steps,
+  };
+  return EVENT_MISSION_DONE;
+}
+
+export function markerBeacon(state) {
+  if (!state || !state.mission || !state.mission.marker) return null;
+  const mk = state.mission.marker;
+  const pulse = 0.5 + 0.5 * Math.sin((state.time || 0) * 4);
+  return { x: mk.x, y: mk.y, height: 120, pulse };
 }

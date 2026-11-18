@@ -1,71 +1,74 @@
-// VELMORA — Sunset Streets: save game.
-//
-// One small record in localStorage: how many story missions are done, cash,
-// best cash, the mute flag, and the player's 3D camera preference
-// ({mode, dist}). Every access is guarded so private mode (or a missing
-// localStorage) degrades to "no save" instead of throwing.
+// save.js — localStorage persistence for VELMORA: Sunset Streets.
+// Every read and write is guarded: in a private window or a blocked
+// context localStorage throws, and the game must keep playing regardless.
+
 import { SAVE_KEY } from './config.js';
 
-function storage() {
+function readRaw() {
   try {
     if (typeof localStorage === 'undefined') return null;
-    return localStorage;
-  } catch {
+    return localStorage.getItem(SAVE_KEY);
+  } catch (err) {
     return null;
   }
 }
 
-function clean(data) {
-  if (!data || typeof data !== 'object') return null;
-  const cameraModes = ['follow', 'chase', 'high'];
-  const savedCamera = (data.camera && typeof data.camera === 'object') ? data.camera : {};
+function clampDist(d) {
+  const n = Number(d);
+  if (!Number.isFinite(n)) return 210;
+  return Math.max(160, Math.min(1400, n));
+}
+
+function cleanCamera(cam) {
+  const mode = cam && (cam.mode === 'follow' || cam.mode === 'chase' || cam.mode === 'high')
+    ? cam.mode
+    : 'follow';
+  return { mode, dist: clampDist(cam ? cam.dist : 210) };
+}
+
+export function loadSave() {
+  const raw = readRaw();
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
   return {
-    missionsDone: Number.isFinite(data.missionsDone) ? Math.max(0, Math.floor(data.missionsDone)) : 0,
-    cash: Number.isFinite(data.cash) ? Math.max(0, Math.floor(data.cash)) : 0,
-    bestCash: Number.isFinite(data.bestCash) ? Math.max(0, Math.floor(data.bestCash)) : 0,
-    muted: !!data.muted,
-    camera: {
-      mode: cameraModes.includes(savedCamera.mode) ? savedCamera.mode : 'follow',
-      dist: Number.isFinite(savedCamera.dist)
-        ? Math.max(160, Math.min(1400, savedCamera.dist))
-        : 260,
-    },
+    missionsDone: Math.max(0, Math.floor(Number(parsed.missionsDone) || 0)),
+    cash: Math.max(0, Math.floor(Number(parsed.cash) || 0)),
+    bestCash: Math.max(0, Math.floor(Number(parsed.bestCash) || 0)),
+    muted: parsed.muted === true,
+    camera: cleanCamera(parsed.camera),
   };
 }
 
-// Load the save, or null when there is none (or it is unreadable).
-export function loadSave() {
-  try {
-    const store = storage();
-    if (!store) return null;
-    const raw = store.getItem(SAVE_KEY);
-    if (!raw) return null;
-    return clean(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-// Persist a save record. Extra fields on `data` are dropped; only the five
-// known fields are stored.
 export function saveGame(data) {
+  if (!data || typeof data !== 'object') return false;
+  const record = {
+    missionsDone: Math.max(0, Math.floor(Number(data.missionsDone) || 0)),
+    cash: Math.max(0, Math.floor(Number(data.cash) || 0)),
+    bestCash: Math.max(0, Math.floor(Number(data.bestCash) || 0)),
+    muted: data.muted === true,
+    camera: cleanCamera(data.camera),
+  };
   try {
-    const store = storage();
-    if (!store) return;
-    const record = clean(data);
-    if (!record) return;
-    store.setItem(SAVE_KEY, JSON.stringify(record));
-  } catch {
-    // Storage can be off (private windows): the save then lasts this visit only.
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(record));
+    return true;
+  } catch (err) {
+    return false;
   }
 }
 
 export function clearSave() {
   try {
-    const store = storage();
-    if (!store) return;
-    store.removeItem(SAVE_KEY);
-  } catch {
-    // Nothing to clear if storage is unavailable.
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.removeItem(SAVE_KEY);
+    return true;
+  } catch (err) {
+    return false;
   }
 }

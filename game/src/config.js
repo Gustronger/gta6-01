@@ -1,123 +1,52 @@
-// VELMORA — Sunset Streets: every tuning number, colour and table in one place.
-// The world is a fixed 4096x4096 city; the renderer scales a 1280x720 logical
-// view over it, so no rule below depends on the screen size.
-
 export const WORLD = { width: 4096, height: 4096 };
 
 export const VIEW = { width: 1280, height: 720 };
 
-/** The simulation's fixed step, in seconds: 60 updates a second. */
 export const STEP = 1 / 60;
 
-/** Road lines and width, shared by the city builder and the traffic model. */
-export const ROAD_LINES = [224, 672, 1120, 1568, 2016, 2464, 2912, 3360, 3808];
-export const ROAD_WIDTH = 88;
-
-export const PALETTE = {
-  ocean: '#2f7fa8',
-  oceanDeep: '#256b92',
-  beach: '#e8d5a2',
-  boardwalk: '#c9a06a',
-  grass: '#5f9e52',
-  parkDark: '#4c8a44',
-  road: '#3a3f4a',
-  roadEdge: '#2c303a',
-  lane: '#e8d47a',
-  sidewalk: '#9aa0ab',
-  building: '#b98a68',
-  house: '#c99a72',
-  shop: '#d8b25e',
-  tower: '#7fa8c9',
-  towerGlass: '#9cc3de',
-  warehouse: '#8a7f74',
-  roof: '#6e4a3a',
-  player: '#f2c94c',
-  police: '#3f6fd8',
-  taxi: '#f2c94c',
-  text: '#f4efe6',
-  muted: '#a8a294',
-  hud: '#14161c',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the save lives between visits (this browser only). */
 export const SAVE_KEY = 'velmora.save.v1';
 
-export const PLAYER = {
-  walkSpeed: 230,
-  radius: 14,
-  health: 100,
-  enterRange: 64,
-  punchRange: 36,
-  punchDamage: 20,
-  punchCooldown: 0.35,
-  fireCooldown: 0.12,
-  startCash: 200,
+export const THREE_VERSION = '0.187.0';
+
+export const FONT = 'bold 16px system-ui, sans-serif';
+
+export const PALETTE = {
+  road: '#2b2b33',
+  roadLine: '#e8e0c8',
+  sidewalk: '#8a7f70',
+  park: '#4f9e4d',
+  beach: '#e8d9a0',
+  ocean: '#2e7f8f',
+  grass: '#5aa75a',
+  hud: '#0d0d12',
+  accent: '#f5b942',
+  text: '#ffffff',
+  muted: '#c9c9d1',
 };
+
+export const PLAYER = { radius: 14, walkSpeed: 220, health: 100 };
 
 export const CAR = {
-  length: 48,
-  width: 26,
-  radius: 21,
-  accel: 540,
-  reverseAccel: 320,
-  brake: 760,
-  maxSpeed: 640,
-  maxReverse: 190,
-  steerRate: 2.7,
-  drag: 0.55,
-  rollingDrag: 0.12,
-  hp: 100,
-  crashSpeed: 320,
-  enterRange: 64,
+  accel: 520,
+  brake: 700,
+  maxSpeed: 520,
+  reverseMax: 180,
+  turn: 2.6,
+  radius: 26,
 };
 
-export const TRAFFIC = {
-  count: 26,
-  parkedCount: 12,
-  minSpeed: 130,
-  maxSpeed: 230,
-  turnChance: 0.22,
-  followGap: 90,
-};
+export const TRAFFIC = { count: 14, speedMin: 120, speedMax: 220 };
 
-export const PED = {
-  count: 42,
-  walkMin: 38,
-  walkMax: 72,
-  fleeSpeed: 150,
-  radius: 11,
-  taxiChance: 0.12,
-};
+export const PED = { count: 18, walkSpeed: 60 };
 
-export const POLICE = {
-  carSpeed: 560,
-  carAccel: 620,
-  footSpeed: 185,
-  punchDamage: 8,
-  punchRange: 30,
-  punchCooldown: 0.9,
-  spawnDistance: 620,
-  despawnDistance: 1400,
-  ramDamage: 12,
-};
+export const POLICE = { carSpeed: 560, copSpeed: 200 };
 
-export const WANTED = {
-  max: 5,
-  decayAfter: 12,
-  decayInterval: 8,
-  clearDistance: 400,
-  steal: 1,
-  hitPed: 1,
-  shootPublic: 1,
-  killCop: 1,
-};
+export const WANTED = { max: 5, decayAfter: 12, decayEvery: 8, policeRadius: 400 };
 
 export const WEAPONS = {
-  fists: { damage: 20, range: 36, rate: 0.35, bulletSpeed: 0, auto: false },
-  pistol: { damage: 34, range: 520, rate: 0.3, bulletSpeed: 920, auto: false, startAmmo: 12 },
-  smg: { damage: 18, range: 460, rate: 0.09, bulletSpeed: 980, auto: true, startAmmo: 24 },
+  fists: { damage: 20, range: 46, rate: 0.45, name: 'FISTS' },
+  pistol: { damage: 34, range: 520, rate: 0.32, name: 'PISTOL', ammo: 12 },
+  smg: { damage: 18, range: 460, rate: 0.09, name: 'SMG', ammo: 30 },
 };
 
 export const PRICES = {
@@ -125,46 +54,21 @@ export const PRICES = {
   pistol: 200,
   smg: 350,
   ammo: 50,
-  ammoAmount: 24,
-  taxiFareMin: 60,
-  taxiFareMax: 150,
-  cashPickupMin: 100,
-  cashPickupMax: 400,
+  taxiMin: 60,
+  taxiMax: 150,
+  stashMin: 100,
+  stashMax: 400,
   healthPickup: 40,
   ammoPickup: 24,
 };
 
 export const DISTRICTS = [
-  { id: 'oldtown', name: 'Old Town', x0: 0, y0: 0, x1: 2048, y1: 2048 },
-  { id: 'downtown', name: 'Downtown', x0: 2048, y0: 0, x1: 4096, y1: 2048 },
-  { id: 'marina', name: 'Marina', x0: 0, y0: 2048, x1: 2048, y1: 4096 },
-  { id: 'docks', name: 'Docks', x0: 2048, y0: 2048, x1: 4096, y1: 4096 },
+  { name: 'Old Town', x0: 0, y0: 0, x1: 2048, y1: 2048 },
+  { name: 'Downtown', x0: 2048, y0: 0, x1: 4096, y1: 2048 },
+  { name: 'Marina', x0: 0, y0: 2048, x1: 2048, y1: 4096 },
+  { name: 'Docks', x0: 2048, y0: 2048, x1: 4096, y1: 4096 },
 ];
 
-/** Vendored three.js version (game/vendor/three.min.js, minified ES module). */
-export const THREE_VERSION = '0.187.0';
-
-/** 3D camera + sunset rig (scene3d.js). Distances are world units, FOV in degrees. */
-export const CAMERA3D = {
-  followDist: 210,
-  followHeight: 175,
-  chaseDist: 330,
-  chaseHeight: 190,
-  highDist: 1800, // wide establishing shot: ~7 blocks of road grid in frame
-  highPitchDeg: 57,
-  highFov: 50,
-  fov: 55,
-  fovKick: 12,
-  near: 10,
-  far: 12000,
-  sun: { x: -0.55, y: 0.72, z: 0.42 },
-  fogNear: 2000,
-  fogFar: 6500,
-  shadowMapSize: 2048,
-  shadowRange: 750,
-};
-
-/** Event bit flags returned by world.step(). Combine with |. */
 export const EVENT_SHOT = 1;
 export const EVENT_PUNCH = 2;
 export const EVENT_PICKUP = 4;
@@ -177,3 +81,14 @@ export const EVENT_BUSTED = 256;
 export const EVENT_WASTED = 512;
 export const EVENT_STEAL = 1024;
 export const EVENT_HIT = 2048;
+
+export const CAMERA3D = {
+  follow: { dist: 210, height: 175 },
+  chase: { dist: 330, height: 190 },
+  high: { dist: 1800, angle: 57 },
+  fov: 55,
+  fovKick: 12,
+  shadow: 2048,
+  fogNear: 2000,
+  fogFar: 6500,
+};

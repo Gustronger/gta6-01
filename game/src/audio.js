@@ -1,299 +1,24 @@
-// VELMORA — Sunset Streets: sound.
-//
-// Everything is synthesized with WebAudio — no audio files, no network. The
-// AudioContext is created lazily inside ensure(), so calling any of these
-// before the first user gesture is a safe no-op instead of a throw. Every
-// public method is wrapped so a missing or denied AudioContext can never
-// crash the game loop.
+// audio.js — all-synthesised WebAudio sound for VELMORA: Sunset Streets.
+// No audio files: every effect is an oscillator or filtered noise burst,
+// and the music is a minor-key bassline with hats at about 100 bpm.
+
 export function createAudio() {
   let ctx = null;
   let master = null;
-  let mutedFlag = false;
+  let noiseBuf = null;
   let musicTimer = null;
   let musicStep = 0;
   let nextNoteTime = 0;
   let engineOsc = null;
   let engineGain = null;
+  let engineFilter = null;
   let sirenOsc = null;
-  let sirenLfo = null;
   let sirenGain = null;
+  let sirenTimer = null;
+  let sirenHigh = false;
 
-  // Create (or resume) the context. Returns it, or null when audio is
-  // unavailable — callers treat null as "stay silent".
-  function ensure() {
-    try {
-      if (typeof window === 'undefined') return null;
-      if (!ctx) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return null;
-        ctx = new AC();
-        master = ctx.createGain();
-        master.gain.value = mutedFlag ? 0 : 0.5;
-        master.connect(ctx.destination);
-      }
-      if (ctx.state === 'suspended') void ctx.resume();
-      return ctx;
-    } catch {
-      return null;
-    }
-  }
-
-  function tone(freq, freqEnd, dur, type, vol, delay, dest) {
-    if (!ctx || !master) return;
-    try {
-      const t0 = ctx.currentTime + (delay || 0);
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = type || 'sine';
-      osc.frequency.setValueAtTime(freq, t0);
-      if (freqEnd && freqEnd !== freq) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t0 + dur);
-      gain.gain.setValueAtTime(vol, t0);
-      gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-      osc.connect(gain);
-      gain.connect(dest || master);
-      osc.start(t0);
-      osc.stop(t0 + dur + 0.02);
-    } catch {
-      // A single effect must never take the game down with it.
-    }
-  }
-
-  function noise(dur, vol, filterFreq, filterType, delay, dest) {
-    if (!ctx || !master) return;
-    try {
-      const t0 = ctx.currentTime + (delay || 0);
-      const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
-      const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < len; i += 1) data[i] = Math.random() * 2 - 1;
-      const src = ctx.createBufferSource();
-      src.buffer = buffer;
-      const filter = ctx.createBiquadFilter();
-      filter.type = filterType || 'lowpass';
-      filter.frequency.value = filterFreq || 1200;
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(vol, t0);
-      gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-      src.connect(filter);
-      filter.connect(gain);
-      gain.connect(dest || master);
-      src.start(t0);
-      src.stop(t0 + dur + 0.02);
-    } catch {
-      // As above: silence is better than a crash.
-    }
-  }
-
-  // Every effect takes an optional `dest` node to connect through; without
-  // one it plays straight into the master bus, exactly as before. sfxAt
-  // passes a distance-attenuated, panned chain as `dest`.
-  const SFX = {
-    shot(dest) {
-      noise(0.12, 0.5, 1800, undefined, 0, dest);
-      tone(180, 60, 0.1, 'square', 0.25, 0, dest);
-    },
-    punch(dest) {
-      tone(120, 50, 0.12, 'sine', 0.5, 0, dest);
-      noise(0.06, 0.25, 900, undefined, 0, dest);
-    },
-    pickup(dest) {
-      tone(660, 660, 0.07, 'sine', 0.3, 0, dest);
-      tone(880, 880, 0.1, 'sine', 0.3, 0.07, dest);
-    },
-    siren(dest) {
-      tone(750, 750, 0.16, 'triangle', 0.25, 0, dest);
-      tone(950, 950, 0.16, 'triangle', 0.25, 0.16, dest);
-    },
-    crash(dest) {
-      noise(0.3, 0.5, 420, undefined, 0, dest);
-      tone(90, 40, 0.25, 'sine', 0.4, 0, dest);
-    },
-    mission(dest) {
-      tone(440, 440, 0.12, 'triangle', 0.3, 0, dest);
-      tone(523, 523, 0.12, 'triangle', 0.3, 0.12, dest);
-      tone(659, 659, 0.12, 'triangle', 0.3, 0.24, dest);
-      tone(880, 880, 0.22, 'triangle', 0.3, 0.36, dest);
-    },
-    wasted(dest) {
-      tone(330, 330, 0.25, 'sawtooth', 0.25, 0, dest);
-      tone(262, 262, 0.25, 'sawtooth', 0.25, 0.25, dest);
-      tone(196, 130, 0.5, 'sawtooth', 0.25, 0.5, dest);
-    },
-    busted(dest) {
-      tone(220, 220, 0.2, 'square', 0.25, 0, dest);
-      tone(175, 175, 0.35, 'square', 0.25, 0.2, dest);
-    },
-    click(dest) {
-      tone(1000, 1000, 0.03, 'square', 0.15, 0, dest);
-    },
-    steal(dest) {
-      tone(300, 700, 0.15, 'sawtooth', 0.25, 0, dest);
-    },
-    cash(dest) {
-      tone(988, 988, 0.08, 'sine', 0.3, 0, dest);
-      tone(1319, 1319, 0.14, 'sine', 0.3, 0.08, dest);
-    },
-    buy(dest) {
-      tone(784, 784, 0.08, 'triangle', 0.3, 0, dest);
-      tone(1047, 1047, 0.14, 'triangle', 0.3, 0.08, dest);
-    },
-  };
-
-  function sfx(name) {
-    try {
-      if (!ensure()) return;
-      const fn = SFX[name];
-      if (fn) fn();
-    } catch {
-      // Never throw from a sound effect.
-    }
-  }
-
-  // Positional one-shot: the sound at (x, y) heard from listener (lx, ly).
-  // Volume attenuates with distance (silent past ~900 world units) and the
-  // sound is panned left/right from the relative x of the source.
-  function sfxAt(name, x, y, lx, ly) {
-    try {
-      if (!ensure()) return;
-      const fn = SFX[name];
-      if (!fn) return;
-      const sx = Number.isFinite(x) ? x : 0;
-      const sy = Number.isFinite(y) ? y : 0;
-      const hearX = Number.isFinite(lx) ? lx : 0;
-      const hearY = Number.isFinite(ly) ? ly : 0;
-      const dist = Math.hypot(sx - hearX, sy - hearY);
-      const vol = Math.max(0, 1 - dist / 900);
-      if (vol <= 0.02) return;
-      const gain = ctx.createGain();
-      gain.gain.value = vol;
-      if (typeof ctx.createStereoPanner === 'function') {
-        const pan = ctx.createStereoPanner();
-        pan.pan.value = Math.max(-1, Math.min(1, (sx - hearX) / 600));
-        gain.connect(pan);
-        pan.connect(master);
-      } else {
-        gain.connect(master);
-      }
-      fn(gain);
-    } catch {
-      // Never throw from a sound effect.
-    }
-  }
-
-  // Engine hum: one sawtooth whose pitch follows speed, audible only while
-  // driving. Created once, then only its frequency and gain move.
-  function engine(speed, driving) {
-    try {
-      if (!ensure()) return;
-      if (!engineOsc) {
-        engineOsc = ctx.createOscillator();
-        engineOsc.type = 'sawtooth';
-        engineOsc.frequency.value = 55;
-        const filter = ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 420;
-        engineGain = ctx.createGain();
-        engineGain.gain.value = 0;
-        engineOsc.connect(filter);
-        filter.connect(engineGain);
-        engineGain.connect(master);
-        engineOsc.start();
-      }
-      const targetFreq = 50 + Math.max(0, speed || 0) * 0.14;
-      engineOsc.frequency.setTargetAtTime(targetFreq, ctx.currentTime, 0.08);
-      engineGain.gain.setTargetAtTime(driving ? 0.05 : 0, ctx.currentTime, 0.1);
-    } catch {
-      // Silence on failure.
-    }
-  }
-
-  // Two-tone police siren loop: a triangle wave wobbling between ~700 and
-  // ~1000 Hz on a slow square LFO. `on` false fades it out.
-  function siren(on) {
-    try {
-      if (!ensure()) return;
-      if (on && !sirenOsc) {
-        sirenOsc = ctx.createOscillator();
-        sirenOsc.type = 'triangle';
-        sirenOsc.frequency.value = 850;
-        sirenLfo = ctx.createOscillator();
-        sirenLfo.type = 'square';
-        sirenLfo.frequency.value = 0.7;
-        const lfoGain = ctx.createGain();
-        lfoGain.gain.value = 150;
-        sirenLfo.connect(lfoGain);
-        lfoGain.connect(sirenOsc.frequency);
-        sirenGain = ctx.createGain();
-        sirenGain.gain.value = 0;
-        sirenOsc.connect(sirenGain);
-        sirenGain.connect(master);
-        sirenOsc.start();
-        sirenLfo.start();
-      }
-      if (sirenGain) {
-        sirenGain.gain.setTargetAtTime(on ? 0.035 : 0, ctx.currentTime, 0.15);
-      }
-    } catch {
-      // Silence on failure.
-    }
-  }
-
-  // Music: a minor-key bassline (A minor: A1, C2, G1, Bb1) with hats on the
-  // off-beats, ~100 bpm, scheduled a little ahead of playback.
-  const BASS_STEPS = [55, 0, 55, 0, 65.41, 0, 55, 0, 49, 0, 49, 0, 58.27, 0, 65.41, 0];
-  const EIGHTH = 60 / 100 / 2;
-
-  function scheduleStep(step, when) {
-    const delay = Math.max(0, when - ctx.currentTime);
-    const bass = BASS_STEPS[step % BASS_STEPS.length];
-    if (bass) tone(bass, bass, 0.26, 'triangle', 0.32, delay);
-    if (step % 2 === 1) noise(0.03, 0.08, 7000, 'highpass', delay);
-  }
-
-  function musicStart() {
-    try {
-      if (musicTimer !== null) return;
-      if (!ensure()) return;
-      musicStep = 0;
-      nextNoteTime = ctx.currentTime + 0.1;
-      musicTimer = setInterval(() => {
-        try {
-          if (!ctx) return;
-          while (nextNoteTime < ctx.currentTime + 0.3) {
-            scheduleStep(musicStep, nextNoteTime);
-            musicStep += 1;
-            nextNoteTime += EIGHTH;
-          }
-        } catch {
-          // A missed scheduling tick just skips a note.
-        }
-      }, 100);
-    } catch {
-      // Silence on failure.
-    }
-  }
-
-  function musicStop() {
-    try {
-      if (musicTimer !== null) {
-        clearInterval(musicTimer);
-        musicTimer = null;
-      }
-    } catch {
-      // Nothing to do.
-    }
-  }
-
-  function setMuted(b) {
-    try {
-      mutedFlag = !!b;
-      if (master) master.gain.setTargetAtTime(mutedFlag ? 0 : 0.5, ctx.currentTime, 0.05);
-    } catch {
-      // Mute state is kept even if the context is gone.
-    }
-  }
-
-  return {
+  const api = {
+    muted: false,
     ensure,
     sfx,
     sfxAt,
@@ -302,8 +27,287 @@ export function createAudio() {
     musicStart,
     musicStop,
     setMuted,
-    get muted() {
-      return mutedFlag;
-    },
   };
+
+  function ensure() {
+    if (ctx) {
+      if (ctx.state === 'suspended') ctx.resume();
+      return;
+    }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = api.muted ? 0 : 0.8;
+      master.connect(ctx.destination);
+      const len = ctx.sampleRate;
+      noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    } catch (err) {
+      ctx = null;
+    }
+  }
+
+  function setMuted(b) {
+    api.muted = !!b;
+    if (master) master.gain.value = api.muted ? 0 : 0.8;
+  }
+
+  function tone(freq, dur, type, vol, slideTo, when) {
+    if (!ctx || !master) return;
+    const t0 = when || ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
+    g.gain.setValueAtTime(vol || 0.2, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(g);
+    g.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  function noise(dur, vol, filterFreq, type, when) {
+    if (!ctx || !master || !noiseBuf) return;
+    const t0 = when || ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = type || 'bandpass';
+    filter.frequency.value = filterFreq || 1200;
+    filter.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol || 0.25, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(master);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+
+  function sfx(name) {
+    ensure();
+    if (!ctx || api.muted) return;
+    switch (name) {
+      case 'shot':
+        noise(0.12, 0.5, 1800, 'highpass');
+        tone(160, 0.09, 'square', 0.25, 60);
+        break;
+      case 'punch':
+        noise(0.08, 0.35, 300, 'lowpass');
+        tone(110, 0.08, 'sine', 0.3, 55);
+        break;
+      case 'pickup':
+        tone(660, 0.09, 'sine', 0.22);
+        tone(990, 0.14, 'sine', 0.22, null, ctx.currentTime + 0.08);
+        break;
+      case 'cash':
+        tone(880, 0.07, 'triangle', 0.22);
+        tone(1174, 0.07, 'triangle', 0.22, null, ctx.currentTime + 0.07);
+        tone(1568, 0.12, 'triangle', 0.22, null, ctx.currentTime + 0.14);
+        break;
+      case 'buy':
+        tone(520, 0.08, 'triangle', 0.22);
+        tone(780, 0.12, 'triangle', 0.22, null, ctx.currentTime + 0.08);
+        break;
+      case 'crash':
+        noise(0.3, 0.5, 500, 'lowpass');
+        tone(90, 0.25, 'sawtooth', 0.25, 40);
+        break;
+      case 'mission':
+        tone(523, 0.12, 'triangle', 0.22);
+        tone(659, 0.12, 'triangle', 0.22, null, ctx.currentTime + 0.11);
+        tone(784, 0.22, 'triangle', 0.24, null, ctx.currentTime + 0.22);
+        break;
+      case 'wasted':
+        tone(220, 0.35, 'sawtooth', 0.22, 110);
+        tone(110, 0.6, 'sawtooth', 0.22, 55, ctx.currentTime + 0.3);
+        break;
+      case 'busted':
+        tone(392, 0.18, 'square', 0.18, 370);
+        tone(311, 0.3, 'square', 0.18, 294, ctx.currentTime + 0.18);
+        break;
+      case 'siren':
+        tone(700, 0.4, 'sine', 0.12, 950);
+        break;
+      case 'click':
+        tone(1200, 0.04, 'square', 0.12);
+        break;
+      case 'steal':
+        tone(300, 0.1, 'sawtooth', 0.2, 520);
+        break;
+      default:
+        tone(440, 0.08, 'sine', 0.15);
+        break;
+    }
+  }
+
+  // Positional effect: volume falls with distance from the listener (lx, ly),
+  // stereo pan follows the relative x, and anything past ~900 units is silent.
+  function sfxAt(name, x, y, lx, ly) {
+    ensure();
+    if (!ctx || !master || api.muted) return;
+    const d = Math.hypot(x - lx, y - ly);
+    if (d > 900) return;
+    const vol = 1 - d / 900;
+    if (vol <= 0.02) return;
+    const pan = Math.max(-1, Math.min(1, (x - lx) / 450));
+    const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.value = pan;
+      panner.connect(master);
+    }
+    // Distance shapes the gain inside playAtVolume; the panner carries pan.
+    playAtVolume(name, vol, panner);
+  }
+
+  function playAtVolume(name, vol, panner) {
+    if (!ctx) return;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    if (panner) {
+      g.connect(panner);
+    } else {
+      g.connect(master);
+    }
+    const out = g;
+    const t0 = ctx.currentTime;
+    if (name === 'shot') {
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'highpass';
+      f.frequency.value = 1800;
+      const eg = ctx.createGain();
+      eg.gain.setValueAtTime(0.5, t0);
+      eg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+      src.connect(f);
+      f.connect(eg);
+      eg.connect(out);
+      src.start(t0);
+      src.stop(t0 + 0.14);
+    } else if (name === 'crash') {
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 500;
+      const eg = ctx.createGain();
+      eg.gain.setValueAtTime(0.5, t0);
+      eg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+      src.connect(f);
+      f.connect(eg);
+      eg.connect(out);
+      src.start(t0);
+      src.stop(t0 + 0.32);
+    } else {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = name === 'punch' ? 110 : 660;
+      const eg = ctx.createGain();
+      eg.gain.setValueAtTime(0.25, t0);
+      eg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+      osc.connect(eg);
+      eg.connect(out);
+      osc.start(t0);
+      osc.stop(t0 + 0.11);
+    }
+    setTimeout(() => { try { g.disconnect(); } catch (err) { /* already gone */ } }, 600);
+  }
+
+  function engine(speed, driving) {
+    ensure();
+    if (!ctx || !master) return;
+    if (!driving || api.muted) {
+      if (engineGain) engineGain.gain.value = 0;
+      return;
+    }
+    if (!engineOsc) {
+      engineOsc = ctx.createOscillator();
+      engineOsc.type = 'sawtooth';
+      engineFilter = ctx.createBiquadFilter();
+      engineFilter.type = 'lowpass';
+      engineFilter.frequency.value = 700;
+      engineGain = ctx.createGain();
+      engineGain.gain.value = 0;
+      engineOsc.connect(engineFilter);
+      engineFilter.connect(engineGain);
+      engineGain.connect(master);
+      engineOsc.start();
+    }
+    const ratio = Math.max(0, Math.min(1, Math.abs(speed) / 520));
+    engineOsc.frequency.value = 55 + ratio * 165;
+    engineFilter.frequency.value = 400 + ratio * 900;
+    engineGain.gain.value = 0.05 + ratio * 0.07;
+  }
+
+  function siren(on) {
+    ensure();
+    if (!ctx || !master) return;
+    if (!on) {
+      if (sirenGain) sirenGain.gain.value = 0;
+      if (sirenTimer) {
+        clearInterval(sirenTimer);
+        sirenTimer = null;
+      }
+      return;
+    }
+    if (!sirenOsc) {
+      sirenOsc = ctx.createOscillator();
+      sirenOsc.type = 'sine';
+      sirenOsc.frequency.value = 750;
+      sirenGain = ctx.createGain();
+      sirenGain.gain.value = 0.05;
+      sirenOsc.connect(sirenGain);
+      sirenGain.connect(master);
+      sirenOsc.start();
+    }
+    sirenGain.gain.value = api.muted ? 0 : 0.05;
+    if (!sirenTimer) {
+      sirenTimer = setInterval(() => {
+        if (!sirenOsc) return;
+        sirenHigh = !sirenHigh;
+        sirenOsc.frequency.value = sirenHigh ? 950 : 700;
+      }, 420);
+    }
+  }
+
+  // Minor-key loop: A minor bassline (A1–E2 walk) with a hat on every beat.
+  // Scheduled a bar ahead so it stays steady at ~100 bpm (beat = 0.6 s).
+  const BASS = [55, 55, 65.41, 49, 55, 55, 82.41, 73.42];
+  function musicStart() {
+    ensure();
+    if (!ctx || musicTimer) return;
+    musicStep = 0;
+    nextNoteTime = ctx.currentTime + 0.1;
+    musicTimer = setInterval(() => {
+      if (!ctx || api.muted) return;
+      while (nextNoteTime < ctx.currentTime + 0.35) {
+        const beat = 0.6;
+        const note = BASS[musicStep % BASS.length];
+        tone(note, beat * 0.9, 'triangle', 0.16, null, nextNoteTime);
+        tone(note * 2, beat * 0.4, 'sine', 0.05, null, nextNoteTime);
+        noise(0.03, 0.06, 8000, 'highpass', nextNoteTime + beat / 2);
+        nextNoteTime += beat;
+        musicStep += 1;
+      }
+    }, 100);
+  }
+
+  function musicStop() {
+    if (musicTimer) {
+      clearInterval(musicTimer);
+      musicTimer = null;
+    }
+  }
+
+  return api;
 }

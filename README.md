@@ -1,44 +1,51 @@
-# gta6-01
+# VELMORA — Sunset Streets
+
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/Gustronger/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/Gustronger/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-VELMORA — Sunset Streets: an original 3D open-world crime game. Explore a sun-soaked coastal city on foot and by car, steal cars, outrun the VPD wanted level, and run five story jobs for fixer Nadia Sol — now rendered in 3D with three.js.
 
-## The 3D version
+An original open-world crime game in the spirit of GTA 6, built for the
+make.fun **gta6-01** bounty. Explore the sun-soaked coastal city of Velmora
+on foot and by car, steal cars, outrun the VPD, take jobs from fixer
+Nadia Sol, and fight the Cobras — all rendered in real 3D (three.js).
 
-The simulation still runs on the 2D ground plane (x, y), but the city is drawn in 3D: glass Downtown towers, low Old Town houses, Docks warehouses and cranes, streetlights, park trees, and a pulsing beacon column over the active mission marker. Bullets fly at muzzle height, particles arc up and fall back to the ground, and gunshots, punches and pickups are positional audio — louder and panned by where they happen relative to Milo.
+## Story
 
-Three cameras, all driven from the same `state.camera` (`mode`, `dist`, `yaw`):
+Milo Vane, a getaway driver new in town, owes a debt he cannot pay. Fixer
+Nadia Sol has five jobs that can buy his freedom — if the VPD and the
+Cobras let him finish them. Five story missions plus side jobs: taxi fares
+and hidden cash stashes across four districts (Old Town, Downtown, Marina,
+Docks).
 
-- **follow** — third-person, behind Milo on foot
-- **chase** — low behind the car while driving (automatic when you get in a car)
-- **high** — elevated wide view over the city
+## How to play
 
-The camera switches automatically between follow and chase as you get in and out of cars, unless you lock in a mode yourself.
+Serve `game/` with any static file server and open `game/index.html` in
+desktop Chrome. No network, no build step — everything loads from files
+under `game/`, including the vendored three.js build.
 
 ## Controls
 
-- **WASD / arrows** — move on foot, drive (W accelerate, S brake/reverse, A/D steer)
-- **Mouse** — aim, click to shoot
-- **Space** — punch
-- **E** — enter / steal a car, exit, buy at the gun shop
-- **C** — cycle camera: follow → chase → high (your choice is saved)
-- **Mouse wheel** — zoom the camera in and out
-- **P / Esc** — pause
-- **M** — mute
-- **Enter / click** — start, resume, retry
+| Input | Action |
+| --- | --- |
+| WASD / Arrows | Move on foot, drive |
+| E | Enter / exit car, interact |
+| Space | Punch |
+| Mouse + Click | Aim, shoot |
+| C | Cycle camera |
+| Mouse wheel | Zoom camera |
+| P / Esc | Pause |
+| M | Mute |
 
-## Run it
+Wanted level rises when you steal cars, hit pedestrians, or shoot in
+public. Lose the heat at a pay-n-spray, or outrun it. Buy guns and ammo at
+the gun shop. Progress saves to your browser automatically.
 
-```sh
-node serve.ts
-```
+## Referral
 
-Then open http://localhost:8080. No build step, no network: the game, its three.js renderer and all sound are local files.
+Referral code: **29zfswpd**
 
-## The city
+## Tech
 
-Four districts — Old Town (NW), Downtown (NE), Marina (SW, beach and boardwalk), Docks (SE, warehouses and cranes) — on a 4096×4096 map with a seeded road grid, so the same seed always builds the same Velmora. Five story missions from Nadia Sol, plus taxi fares and cash stashes. Wanted level 0–5, VPD cars and foot cops, pay-n-spray garages, and the gold Aurora GT waiting Downtown.
-
----
-<sub>Entered on [make.fun](https://make.fun/?ref=29zfswpd&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+- three.js 0.187.0 (vendored under `game/vendor/`, minified ES module)
+- Fixed 1/60 s simulation steps, seeded RNG, localStorage saves
+- Screenshots are real renders of the game in a browser

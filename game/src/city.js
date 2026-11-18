@@ -1,249 +1,234 @@
-// Velmora's map: a 9x9 road grid over a 4096x4096 island city, built once
-// from the seeded generator so the same seed always yields the same streets,
-// blocks, parks and shops.
-import { DISTRICTS, ROAD_LINES, ROAD_WIDTH, WORLD } from './config.js';
-import { pick, randFloat, randInt } from './random.js';
+import { DISTRICTS } from './config.js';
 
-export const LINES = ROAD_LINES;
-export const ROAD_W = ROAD_WIDTH;
+export const LINES = [224, 672, 1120, 1568, 2016, 2464, 2912, 3360, 3808];
 
-/** District id for a point: NW Old Town, NE Downtown, SW Marina, SE Docks. */
-export function districtAt(x, y) {
+export const ROAD_W = 88;
+
+const ROOFS = {
+  'Old Town': ['#b5563a', '#c97a3d', '#8f5a3c', '#a84f4f', '#7a6a4f', '#96522e'],
+  Downtown: ['#3d5a73', '#516e86', '#2f485e', '#6b8aa0', '#44586e', '#7d9bb0'],
+  Marina: ['#d98a7a', '#e8b06a', '#7fb0a0', '#c96a6a', '#e0c078', '#8aa8c8'],
+  Docks: ['#6e5a4a', '#7a6a58', '#5a6e7a', '#8a7a5a', '#4f5a52', '#9a8a6a'],
+};
+
+const WALLS = {
+  'Old Town': ['#d9c49a', '#c8a878', '#e0d0b0', '#b89a78', '#d0b088', '#c09070'],
+  Downtown: ['#9ab0c0', '#b0c0d0', '#88a0b8', '#c0d0dc', '#7a94a8', '#a8bcc8'],
+  Marina: ['#f0e0c0', '#e8d0a0', '#d0e0d8', '#f0c8b0', '#e0d8c0', '#c8d8e8'],
+  Docks: ['#8a7a68', '#9a8a72', '#7a6a5a', '#a08a6a', '#6a7a72', '#b09878'],
+};
+
+const SHOP_NAMES = ['Sunset Market', 'Velmora Diner', 'Boardwalk Books', 'Harbor Tackle'];
+
+function districtFor(x, y) {
   for (const d of DISTRICTS) {
-    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d.id;
+    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d.name;
   }
-  return 'docks';
+  return 'Old Town';
 }
 
-function districtName(id) {
-  const found = DISTRICTS.find((d) => d.id === id);
-  return found ? found.name : id;
+function clamp(v, lo, hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
 }
 
-/** The solid strips between neighbouring roads, plus the outer rim strips. */
-function blockSpans() {
-  const half = ROAD_W / 2;
-  const edges = [0];
-  for (const line of LINES) edges.push(line - half, line + half);
-  edges.push(WORLD.width);
-  const spans = [];
-  for (let i = 0; i + 1 < edges.length; i += 2) {
-    spans.push({ from: edges[i], to: edges[i + 1] });
+function nearestLine(lines, v) {
+  let best = lines[0];
+  let bestD = Math.abs(v - lines[0]);
+  for (let i = 1; i < lines.length; i++) {
+    const d = Math.abs(v - lines[i]);
+    if (d < bestD) {
+      bestD = d;
+      best = lines[i];
+    }
   }
-  return spans;
+  return best;
 }
 
-/** True when the point sits on asphalt (within half a road width of a line). */
 export function isOnRoad(city, x, y) {
   const half = city.roadW / 2;
   for (const line of city.lines) {
-    if (Math.abs(x - line) <= half || Math.abs(y - line) <= half) return true;
+    if (Math.abs(x - line) <= half) return true;
+    if (Math.abs(y - line) <= half) return true;
   }
   return false;
 }
 
-/** The closest point on the road network, snapped onto a road centreline. */
 export function nearestRoadPoint(city, x, y) {
-  let bestX = city.lines[0];
-  let bestD = Math.abs(x - bestX);
-  for (const line of city.lines) {
-    const d = Math.abs(x - line);
-    if (d < bestD) { bestD = d; bestX = line; }
-  }
-  let bestY = city.lines[0];
-  bestD = Math.abs(y - bestY);
-  for (const line of city.lines) {
-    const d = Math.abs(y - line);
-    if (d < bestD) { bestD = d; bestY = line; }
-  }
-  // Snap to whichever centreline is nearer, keeping the other coordinate.
-  if (Math.abs(x - bestX) <= Math.abs(y - bestY)) return { x: bestX, y };
-  return { x, y: bestY };
+  const nx = nearestLine(city.lines, x);
+  const ny = nearestLine(city.lines, y);
+  const dx = Math.abs(x - nx);
+  const dy = Math.abs(y - ny);
+  if (dx <= dy) return { x: nx, y: clamp(y, 0, 4096) };
+  return { x: clamp(x, 0, 4096), y: ny };
 }
 
-/** A random point on a random road, with its axis, line and travel direction. */
 export function randomRoadPoint(city, rng) {
-  const line = pick(rng, city.lines);
-  const along = randFloat(rng, 120, WORLD.width - 120);
-  const axis = drawAxis(rng);
-  const dir = drawDir(rng);
-  if (axis === 'x') return { x: along, y: line, axis, line, dir };
-  return { x: line, y: along, axis, line, dir };
+  const line = rng.pick(city.lines);
+  const t = rng.int(120, 3976);
+  const dir = rng.pick([-1, 1]);
+  if (rng.next() < 0.5) return { x: t, y: line, axis: 'x', line, dir };
+  return { x: line, y: t, axis: 'y', line, dir };
 }
 
-function drawAxis(rng) {
-  return rng() < 0.5 ? 'x' : 'y';
+function roadEdgePoint(rng, line, alongMin, alongMax, side) {
+  const along = rng.int(alongMin, alongMax);
+  const off = ROAD_W / 2 + 18;
+  if (side === 'v') return { x: line + off, y: along };
+  if (side === 'v-') return { x: line - off, y: along };
+  if (side === 'h-') return { x: along, y: line - off };
+  return { x: along, y: line + off };
 }
 
-function drawDir(rng) {
-  return rng() < 0.5 ? 1 : -1;
-}
-
-const HOUSE_COLORS = ['#c99a72', '#b98a68', '#d8a97e', '#a87f66', '#c98a6a'];
-const SHOP_COLORS = ['#d8b25e', '#c9a24a', '#b98a3a', '#d8c25e'];
-const TOWER_COLORS = ['#7fa8c9', '#9cc3de', '#6f97b8', '#a8c8e0', '#8fb4d4'];
-const WAREHOUSE_COLORS = ['#8a7f74', '#7a6f64', '#9a8f84', '#6f655c'];
-
-/**
- * Build the whole city from the seeded generator. Buildings fill the blocks
- * between roads (1–3 per block, kind and colour by district); four blocks
- * become parks; the strip y >= 3904 is beach; the south-east is warehouses.
- */
 export function createCity(random) {
-  const rng = random;
-  const spans = blockSpans();
+  const cuts = [0];
+  for (const line of LINES) {
+    cuts.push(line - ROAD_W / 2);
+    cuts.push(line + ROAD_W / 2);
+  }
+  cuts.push(4096);
+
+  const xSpans = [];
+  for (let i = 0; i < cuts.length; i += 2) xSpans.push([cuts[i], cuts[i + 1]]);
+  const ySpans = [];
+  for (let i = 0; i < cuts.length; i += 2) ySpans.push([cuts[i], cuts[i + 1]]);
+
+  const blocks = [];
+  for (const xs of xSpans) {
+    for (const ys of ySpans) {
+      if (ys[0] >= 3852) continue;
+      const cx = (xs[0] + xs[1]) / 2;
+      const cy = (ys[0] + ys[1]) / 2;
+      blocks.push({ x0: xs[0], y0: ys[0], x1: xs[1], y1: ys[1], cx, cy, district: districtFor(cx, cy) });
+    }
+  }
+
+  const parkIdx = new Set();
+  while (parkIdx.size < 4) {
+    parkIdx.add(random.int(0, blocks.length - 1));
+  }
+
   const buildings = [];
   const parks = [];
-
-  // Four park blocks, picked as fixed block-grid cells so they never move
-  // with the seed but the trees inside them still vary.
-  const parkCells = new Set(['2,2', '7,3', '3,7', '6,6']);
-
-  for (let bx = 0; bx < spans.length; bx += 1) {
-    for (let by = 0; by < spans.length; by += 1) {
-      const sx = spans[bx];
-      const sy = spans[by];
-      const cx = (sx.from + sx.to) / 2;
-      const cy = (sy.from + sy.to) / 2;
-      const district = districtAt(cx, cy);
-      // The bottom row of blocks is the beach strip, not buildings.
-      if (sy.from >= 3808) continue;
-      if (parkCells.has(`${bx},${by}`)) {
-        parks.push({
-          x: sx.from + 14, y: sy.from + 14,
-          w: sx.to - sx.from - 28, h: sy.to - sy.from - 28,
-          district,
-        });
-        continue;
-      }
-      const lotCount = randInt(rng, 1, 3);
-      const bw = (sx.to - sx.from - 24) / lotCount;
-      for (let lot = 0; lot < lotCount; lot += 1) {
-        const pad = 12;
-        const bx0 = sx.from + 12 + lot * bw;
-        const by0 = sy.from + 12;
-        const w = bw - pad * 2;
-        const h = sy.to - sy.from - 24;
-        if (w < 40 || h < 40) continue;
-        let kind = 'house';
-        let color = pick(rng, HOUSE_COLORS);
-        let roof = rng() < 0.5 ? 'gable' : 'flat';
-        if (district === 'downtown') {
-          kind = 'tower';
-          color = pick(rng, TOWER_COLORS);
-          roof = 'glass';
-        } else if (district === 'docks') {
-          kind = 'warehouse';
-          color = pick(rng, WAREHOUSE_COLORS);
-          roof = 'flat';
-        } else if (district === 'marina' && rng() < 0.35) {
-          kind = 'shop';
-          color = pick(rng, SHOP_COLORS);
-          roof = 'flat';
-        } else if (district === 'oldtown' && rng() < 0.2) {
-          kind = 'shop';
-          color = pick(rng, SHOP_COLORS);
-          roof = 'flat';
-        }
-        // Towers rise taller than their footprint suggests; the rect
-        // (x, y, w, h) stays the footprint so collision stays simple.
-        // The 3D height lives in `height` (towers 90-160, houses 14-26,
-        // warehouses 22-34, shops 18-30) and winSeed varies the window
-        // pattern per building. (Never store the height in `h`: that key
-        // is the footprint depth the collision code reads.)
-        const heightByKind = { tower: [90, 160], house: [14, 26], warehouse: [22, 34], shop: [18, 30] };
-        const heightRange = heightByKind[kind] || [14, 26];
-        buildings.push({
-          x: bx0, y: by0, w, h,
-          kind, district, color, roof,
-          height: randInt(rng, heightRange[0], heightRange[1]),
-          winSeed: randInt(rng, 0, 9999),
-        });
-      }
+  blocks.forEach((b, i) => {
+    if (parkIdx.has(i)) {
+      parks.push({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 });
+      return;
     }
-  }
-
-  const roads = [];
-  for (const line of LINES) {
-    roads.push({ x1: 0, y1: line, x2: WORLD.width, y2: line, horizontal: true });
-    roads.push({ x1: line, y1: 0, x2: line, y2: WORLD.height, horizontal: false });
-  }
-
-  // Streetlights: one per ~2 intersections, on the corner just off the road.
-  const lamps = [];
-  for (const lx of LINES) {
-    for (const ly of LINES) {
-      if (rng() < 0.5) lamps.push({ x: lx + 58, y: ly + 58 });
+    const bw = b.x1 - b.x0;
+    const bh = b.y1 - b.y0;
+    const inset = bw < 220 || bh < 220 ? 8 : random.int(10, 20);
+    const w = bw - inset * 2;
+    const h = bh - inset * 2;
+    let kind = 'house';
+    let height = random.int(14, 26);
+    if (b.district === 'Docks') {
+      kind = 'warehouse';
+      height = random.int(22, 34);
+    } else if (b.district === 'Downtown') {
+      if (random.next() < 0.16) {
+        kind = 'shop';
+        height = random.int(18, 30);
+      } else {
+        kind = 'tower';
+        height = random.int(90, 160);
+      }
+    } else if (random.next() < 0.12) {
+      kind = 'shop';
+      height = random.int(18, 30);
     }
-  }
+    buildings.push({
+      x: b.x0 + inset,
+      y: b.y0 + inset,
+      w,
+      h,
+      kind,
+      district: b.district,
+      color: random.pick(WALLS[b.district]),
+      roof: random.pick(ROOFS[b.district]),
+      height,
+      winSeed: random.int(0, 999999),
+    });
+  });
 
-  // Three dock cranes in the Docks, over the container yard.
-  const cranes = [
-    { x: 2912, y: 3568, angle: randFloat(rng, -0.4, 0.4) },
-    { x: 3360, y: 3568, angle: randFloat(rng, -0.4, 0.4) },
-    { x: 3808, y: 3568, angle: randFloat(rng, -0.4, 0.4) },
-  ];
-
-  // Trees inside the parks: ~6 per park, seeded position and size.
   const trees = [];
-  for (const park of parks) {
-    for (let t = 0; t < 6; t += 1) {
+  for (const p of parks) {
+    for (let i = 0; i < 6; i++) {
       trees.push({
-        x: randFloat(rng, park.x + 24, park.x + park.w - 24),
-        y: randFloat(rng, park.y + 24, park.y + park.h - 24),
-        s: randFloat(rng, 0.8, 1.4),
+        x: p.x + random.int(24, Math.max(25, p.w - 24)),
+        y: p.y + random.int(24, Math.max(25, p.h - 24)),
       });
     }
   }
 
-  // Garages sit on roadside lots: Pay-n-Spray in Downtown, the gun shop
-  // (Ironworks Arms) in the Docks, plus a second spray shop near Marina.
-  const garages = [
-    { x: 2464, y: 1120 + 66, kind: 'spray', name: "Pay-n-Spray" },
-    { x: 2912 + 66, y: 2912, kind: 'arms', name: 'Ironworks Arms' },
-    { x: 672, y: 2912 + 66, kind: 'spray', name: "Pay-n-Spray" },
-  ];
-  const shops = garages.map((g) => ({ x: g.x, y: g.y, name: g.name, kind: g.kind }));
-
-  // Nadia's garage (mission 1 destination, Downtown) and the hideout (Old Town).
-  const hideout = { x: 672, y: 672 };
-  const nadiaGarage = { x: 2912, y: 1120 };
-
-  const spawns = {
-    player: { x: 1120, y: 672 },
-    cars: [],
-    police: [
-      { x: 2464, y: 224 },
-      { x: 2016, y: 1120 },
-      { x: 3360, y: 1568 },
-    ],
-  };
-  // Parked cars along random roads, angled with the road they sit on.
-  for (let i = 0; i < 12; i += 1) {
-    const p = randomRoadPoint({ lines: LINES, roadW: ROAD_W }, rng);
-    const off = 26;
-    if (p.axis === 'x') spawns.cars.push({ x: p.x, y: p.y + (rng() < 0.5 ? off : -off), angle: p.dir > 0 ? 0 : Math.PI });
-    else spawns.cars.push({ x: p.x + (rng() < 0.5 ? off : -off), y: p.y, angle: p.dir > 0 ? Math.PI / 2 : -Math.PI / 2 });
+  const lamps = [];
+  for (let i = 0; i < 45; i++) {
+    const line = random.pick(LINES);
+    const along = random.int(90, 4006);
+    const side = random.pick([-1, 1]);
+    const off = ROAD_W / 2 + 14;
+    if (random.next() < 0.5) lamps.push({ x: line + side * off, y: along });
+    else lamps.push({ x: along, y: line + side * off });
   }
 
-  const city = {
-    lines: [...LINES],
+  const cranes = [];
+  for (let i = 0; i < 3; i++) {
+    cranes.push({
+      x: random.int(2300, 3900),
+      y: random.int(2300, 3700),
+      angle: random.next() * Math.PI * 2,
+    });
+  }
+
+  const spraySpot = roadEdgePoint(random, LINES[2], 500, 1500, 'v');
+  const armsSpot = roadEdgePoint(random, LINES[5], 500, 1500, 'v-');
+  const garages = [
+    { x: spraySpot.x, y: spraySpot.y, kind: 'spray', name: 'Pay-n-Spray' },
+    { x: armsSpot.x, y: armsSpot.y, kind: 'arms', name: 'Gun Shop' },
+  ];
+
+  const shopLines = [LINES[1], LINES[3], LINES[6], LINES[7]];
+  const shops = SHOP_NAMES.map((name, i) => {
+    const spot = roadEdgePoint(random, shopLines[i], 300 + i * 700, 900 + i * 700, i % 2 === 0 ? 'h' : 'v');
+    return { x: spot.x, y: spot.y, name };
+  });
+
+  const hideout = { x: LINES[1] + 70, y: random.int(500, 1600) };
+  const playerSpawn = { x: LINES[1], y: hideout.y };
+
+  const carSpawns = [];
+  for (let i = 0; i < 12; i++) {
+    const p = randomRoadPoint({ lines: LINES, roadW: ROAD_W }, random);
+    carSpawns.push({ x: p.x, y: p.y, angle: p.axis === 'x' ? (p.dir > 0 ? 0 : Math.PI) : (p.dir > 0 ? Math.PI / 2 : -Math.PI / 2) });
+  }
+
+  const policeSpawns = [];
+  const policeLines = [LINES[5], LINES[6], LINES[7]];
+  for (let i = 0; i < 3; i++) {
+    policeSpawns.push({ x: policeLines[i], y: random.int(300, 1800) });
+  }
+
+  const roads = [];
+  for (const line of LINES) {
+    roads.push({ x1: line, y1: 0, x2: line, y2: 4096, horizontal: false });
+    roads.push({ x1: 0, y1: line, x2: 4096, y2: line, horizontal: true });
+  }
+
+  return {
+    lines: LINES.slice(),
     roadW: ROAD_W,
     buildings,
     parks,
     roads,
-    lamps,
-    cranes,
-    trees,
     beach: { y0: 3904 },
     garages,
     shops,
     hideout,
-    nadiaGarage,
-    spawns,
-    districts: DISTRICTS.map((d) => ({ ...d, label: d.name })),
+    spawns: { player: playerSpawn, cars: carSpawns, police: policeSpawns },
+    districts: DISTRICTS,
+    lamps,
+    cranes,
+    trees,
   };
-  return city;
 }
-
-export { districtName };

@@ -1,262 +1,221 @@
-// VELMORA — Sunset Streets: combat.
-//
-// Bullets, fists and damage. fireWeapon spawns one bullet from the shooter's
-// position; stepBullets moves every bullet and resolves hits against enemies,
-// pedestrians, cars and buildings; punchAttack is the close-range swing.
-// Kills are counted here (enemies only — see below) and a cash pickup is
-// dropped on every second enemy kill, deterministically, so replays agree.
-// Killing a cop pedestrian does not raise wanted here; it sets
-// state._copKilled and the world module turns that into the wanted bump.
-import { EVENT_HIT, EVENT_PUNCH, WEAPONS, WORLD } from './config.js';
+// combat.js — shooting, bullets and fists for VELMORA: Sunset Streets.
+// Bullets carry a z height (1.3 on foot, 1.0 from a car) so the 3D view can
+// draw real tracers; all hit tests stay in the 2D ground plane.
 
-const BULLET_SPEED = 900;
-const BULLET_LIFE = 0.9;
-const ENEMY_HIT_RADIUS = 18;
-const PED_HIT_RADIUS = 16;
-const PLAYER_HIT_RADIUS = 18;
-const CAR_HIT_RADIUS = 30;
-const PUNCH_RANGE = 56;
-const PUNCH_DAMAGE = 20;
-const PUNCH_ARC = 0.5; // cos(60 deg): target must be roughly in front
-const ENEMY_BULLET_DAMAGE = 20;
+import { WEAPONS } from './config.js';
 
-function worldWidth() {
-  return (WORLD && WORLD.width) || 4096;
-}
+const BULLET_SPEED = { pistol: 950, smg: 900 };
+const BULLET_LIFE = 1.4;
 
-function worldHeight() {
-  return (WORLD && WORLD.height) || 4096;
-}
-
-function weaponStats(name) {
-  const table = WEAPONS || {};
-  if (name === 'smg') {
-    const w = table.smg || {};
-    return { damage: typeof w.damage === 'number' ? w.damage : 18 };
-  }
-  const w = table.pistol || {};
-  return { damage: typeof w.damage === 'number' ? w.damage : 34 };
-}
-
-function addParticle(state, x, y, color) {
-  if (!state || !Array.isArray(state.particles)) return;
-  state.particles.push({ x, y, vx: 0, vy: 0, life: 0.35, color, size: 3 });
-}
-
-function dropCash(state, x, y) {
-  if (!state || !Array.isArray(state.pickups)) return;
-  state.pickups.push({ x, y, kind: 'cash' });
-}
-
-function pointInBuilding(state, x, y) {
-  const city = state && state.city;
-  if (!city || !Array.isArray(city.buildings)) return false;
-  for (const b of city.buildings) {
+function pointInBuilding(buildings, x, y) {
+  for (const b of buildings || []) {
     if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return true;
   }
   return false;
 }
 
-// Remove enemy `at` from state.enemies, count the kill and maybe drop cash.
-function killEnemy(state, at) {
-  const enemy = state.enemies[at];
-  state.enemies.splice(at, 1);
-  if (state.stats) state.stats.kills = (state.stats.kills || 0) + 1;
-  addParticle(state, enemy.x, enemy.y, '#e5534b');
-  // Every second enemy kill leaves a cash pickup behind.
-  if (state.stats && state.stats.kills % 2 === 0) dropCash(state, enemy.x, enemy.y);
-}
-
-// Drop a pedestrian: mark them down (they stay in the world as a body) and,
-// if they were a cop, flag it so the world module can raise wanted.
-function killPed(state, ped) {
-  ped.hp = 0;
-  ped.state = 'down';
-  addParticle(state, ped.x, ped.y, '#e5534b');
-  if (ped.kind === 'cop') state._copKilled = true;
-  // Deterministic "sometimes": about a third of peds drop cash, decided by
-  // where they fell, never by a random roll.
-  if (((ped.x + ped.y) | 0) % 3 === 0) dropCash(state, ped.x, ped.y);
-}
-
-// Fire one shot from (x, y) along `angle`. The shooter's weapon comes from
-// state.player when `from` is 'player'; enemy shots use a fixed damage.
-// Returns true only when a bullet actually left the barrel.
-export function fireWeapon(state, x, y, angle, from) {
-  if (!state || !Array.isArray(state.bullets)) return false;
-  const side = from === 'enemy' ? 'enemy' : 'player';
-  let damage = ENEMY_BULLET_DAMAGE;
-  if (side === 'player') {
-    const weapon = (state.player && state.player.weapon) || 'fists';
-    if (weapon === 'fists') return false;
-    if ((state.player.ammo || 0) <= 0) return false;
-    state.player.ammo -= 1;
-    damage = weaponStats(weapon).damage;
+function spawnSparks(state, x, y, z, color, count) {
+  for (let i = 0; i < count; i++) {
+    const a = (i / Math.max(1, count)) * Math.PI * 2 + 0.35 * i;
+    state.particles.push({
+      x,
+      y,
+      z: z || 0,
+      vx: Math.cos(a) * 140,
+      vy: Math.sin(a) * 140,
+      vz: 120 + 40 * i,
+      life: 0.4,
+      color,
+      size: 3,
+    });
   }
-  const muzzle = 22;
-  // 3D muzzle height: 1.3 on foot, 1.0 from a car seat. Enemies are on foot.
-  const muzzleZ = side === 'enemy' ? 1.3 : (state.player && !state.player.onFoot ? 1.0 : 1.3);
+}
+
+function damagePed(state, ped, dmg, from) {
+  ped.hp -= dmg;
+  if (ped.hp <= 0 && ped.state !== 'down') {
+    ped.state = 'down';
+    ped.hp = 0;
+    if (from === 'player') {
+      state.stats.kills += 1;
+      if (ped.kind === 'cop') {
+        state.player.wanted = Math.min(5, state.player.wanted + 1);
+      }
+    }
+    spawnSparks(state, ped.x, ped.y, 0.8, '#c0392b', 8);
+    return true;
+  }
+  spawnSparks(state, ped.x, ped.y, 0.8, '#f1c40f', 3);
+  return false;
+}
+
+function damageEnemy(state, enemy, dmg) {
+  enemy.hp -= dmg;
+  if (enemy.hp <= 0) {
+    enemy.hp = 0;
+    state.stats.kills += 1;
+    spawnSparks(state, enemy.x, enemy.y, 0.8, '#c0392b', 10);
+    return true;
+  }
+  spawnSparks(state, enemy.x, enemy.y, 0.8, '#f1c40f', 3);
+  return false;
+}
+
+// Fire one shot from (x, y) along angle. from is 'player' or 'enemy';
+// weaponName overrides the player's equipped weapon (enemies use 'pistol').
+// Player shots consume ammo; enemy shots never touch the player's ammo.
+// Returns true when a bullet actually left the barrel.
+export function fireWeapon(state, x, y, angle, from, weaponName) {
+  const who = from || 'player';
+  const name = weaponName || (who === 'player' ? state.player.weapon : 'pistol');
+  if (name === 'fists') return false;
+  const spec = WEAPONS[name];
+  if (!spec) return false;
+  if (who === 'player') {
+    if (state.player.ammo <= 0) return false;
+    state.player.ammo -= 1;
+  }
+  const speed = BULLET_SPEED[name] || 900;
+  const z = who === 'player' ? (state.player.onFoot ? 1.3 : 1.0) : 1.3;
   state.bullets.push({
-    x: x + Math.cos(angle) * muzzle,
-    y: y + Math.sin(angle) * muzzle,
-    z: muzzleZ,
-    vx: Math.cos(angle) * BULLET_SPEED,
-    vy: Math.sin(angle) * BULLET_SPEED,
+    x: x + Math.cos(angle) * 22,
+    y: y + Math.sin(angle) * 22,
+    z,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
     life: BULLET_LIFE,
-    from: side,
-    damage,
+    from: who,
+    dmg: spec.damage,
+    weapon: name,
   });
   return true;
 }
 
-// Move every bullet one step and resolve its first hit. Returns EVENT_* flags
-// (EVENT_HIT when anything is struck).
 export function stepBullets(state, dt) {
-  if (!state || !Array.isArray(state.bullets) || state.bullets.length === 0) return 0;
-  let events = 0;
-  const width = worldWidth();
-  const height = worldHeight();
-  for (let i = state.bullets.length - 1; i >= 0; i -= 1) {
-    const bullet = state.bullets[i];
-    bullet.x += bullet.vx * dt;
-    bullet.y += bullet.vy * dt;
-    bullet.life -= dt;
-    if (bullet.life <= 0 || bullet.x < 0 || bullet.x > width || bullet.y < 0 || bullet.y > height) {
-      state.bullets.splice(i, 1);
+  const buildings = (state.city && state.city.buildings) || [];
+  const keep = [];
+  for (const b of state.bullets) {
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.life -= dt;
+    if (b.life <= 0) continue;
+    if (b.x < 0 || b.y < 0 || b.x > 4096 || b.y > 4096) continue;
+    if (pointInBuilding(buildings, b.x, b.y)) {
+      spawnSparks(state, b.x, b.y, b.z, '#bdc3c7', 4);
       continue;
     }
-    if (pointInBuilding(state, bullet.x, bullet.y)) {
-      addParticle(state, bullet.x, bullet.y, '#f2c94c');
-      state.bullets.splice(i, 1);
-      continue;
-    }
-    let hit = false;
-    if (bullet.from === 'player') {
-      // Enemies first.
-      if (Array.isArray(state.enemies)) {
-        for (let e = state.enemies.length - 1; e >= 0; e -= 1) {
-          const enemy = state.enemies[e];
-          const dx = enemy.x - bullet.x;
-          const dy = enemy.y - bullet.y;
-          if (dx * dx + dy * dy <= ENEMY_HIT_RADIUS * ENEMY_HIT_RADIUS) {
-            enemy.hp -= bullet.damage;
-            if (enemy.hp <= 0) killEnemy(state, e);
-            else addParticle(state, bullet.x, bullet.y, '#e5534b');
-            hit = true;
-            break;
-          }
+    let consumed = false;
+    if (b.from === 'player') {
+      for (const e of state.enemies) {
+        if (e.hp > 0 && Math.hypot(e.x - b.x, e.y - b.y) < 18) {
+          damageEnemy(state, e, b.dmg);
+          consumed = true;
+          break;
         }
       }
-      // Then pedestrians still on their feet.
-      if (!hit && Array.isArray(state.peds)) {
+      if (!consumed) {
         for (const ped of state.peds) {
-          if (ped.state === 'down' || (ped.hp || 0) <= 0) continue;
-          const dx = ped.x - bullet.x;
-          const dy = ped.y - bullet.y;
-          if (dx * dx + dy * dy <= PED_HIT_RADIUS * PED_HIT_RADIUS) {
-            ped.hp = (ped.hp || 0) - bullet.damage;
-            if (ped.hp <= 0) killPed(state, ped);
-            else addParticle(state, bullet.x, bullet.y, '#e5534b');
-            hit = true;
+          if (ped.state !== 'down' && Math.hypot(ped.x - b.x, ped.y - b.y) < 16) {
+            damagePed(state, ped, b.dmg, 'player');
+            consumed = true;
             break;
           }
         }
       }
-      // Then cars — never the car the player is driving.
-      if (!hit && Array.isArray(state.cars)) {
+      if (!consumed) {
         for (const car of state.cars) {
-          if (state.player && car === state.player.car) continue;
-          const dx = car.x - bullet.x;
-          const dy = car.y - bullet.y;
-          if (dx * dx + dy * dy <= CAR_HIT_RADIUS * CAR_HIT_RADIUS) {
-            car.hp = (car.hp || 0) - bullet.damage;
+          if (car.driver === 'player') continue;
+          if (Math.hypot(car.x - b.x, car.y - b.y) < 30) {
+            car.hp -= b.dmg;
+            spawnSparks(state, b.x, b.y, b.z, '#f39c12', 5);
             if (car.hp <= 0) {
+              spawnSparks(state, car.x, car.y, 1, '#e74c3c', 16);
               car.hp = 0;
-              addParticle(state, car.x, car.y, '#f28c28');
-            } else {
-              addParticle(state, bullet.x, bullet.y, '#f2c94c');
+              car.driver = 'parked';
+              car.speed = 0;
             }
-            hit = true;
+            consumed = true;
             break;
           }
         }
       }
-    } else if (state.player) {
+    } else {
       // Enemy fire can only hurt the player.
-      const dx = state.player.x - bullet.x;
-      const dy = state.player.y - bullet.y;
-      if (dx * dx + dy * dy <= PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS) {
-        state.player.health = (state.player.health || 0) - bullet.damage;
-        addParticle(state, bullet.x, bullet.y, '#e5534b');
-        hit = true;
+      const p = state.player;
+      if (p.alive && Math.hypot(p.x - b.x, p.y - b.y) < 18) {
+        p.health -= b.dmg;
+        spawnSparks(state, p.x, p.y, 1, '#e74c3c', 5);
+        consumed = true;
       }
     }
-    if (hit) {
-      events |= EVENT_HIT;
-      state.bullets.splice(i, 1);
-    }
+    if (!consumed) keep.push(b);
   }
-  return events;
+  state.bullets = keep;
+  // The dead leave the field: enemies at 0 hp are removed here so mission
+  // code can count survivors by simply looking at state.enemies.
+  state.enemies = state.enemies.filter((e) => e.hp > 0);
 }
 
-// A close-range swing from (x, y) facing `angle`: 20 damage to living
-// targets roughly in front of the attacker, shoved away from the swing.
-// Returns EVENT_PUNCH always, plus EVENT_HIT when something is struck.
+// A close-range swing from (x, y) facing angle. 20 damage, a knockback shove
+// and, on a connect, a 10 px lunge toward the target — cancelled when the
+// lunge destination sits inside a building footprint. Returns true on a hit.
 export function punchAttack(state, x, y, angle) {
-  if (!state) return 0;
-  let events = EVENT_PUNCH;
-  const reach = PUNCH_RANGE * PUNCH_RANGE;
-  const ax = Math.cos(angle);
-  const ay = Math.sin(angle);
-  // 3D lunge: on the first landed hit the attacker nudges a short step
-  // toward the target — a small position offset, never through a wall.
-  let lunged = false;
-  function lunge(target) {
-    if (lunged || !state.player) return;
-    lunged = true;
-    const dx = target.x - x;
-    const dy = target.y - y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const nx = Math.min(worldWidth(), Math.max(0, state.player.x + (dx / dist) * 10));
-    const ny = Math.min(worldHeight(), Math.max(0, state.player.y + (dy / dist) * 10));
-    if (pointInBuilding(state, nx, ny)) return;
-    state.player.x = nx;
-    state.player.y = ny;
+  const range = WEAPONS.fists.range;
+  const buildings = (state.city && state.city.buildings) || [];
+  let best = null;
+  let bestD = Infinity;
+  const consider = (tx, ty) => {
+    const dx = tx - x;
+    const dy = ty - y;
+    const d = Math.hypot(dx, dy);
+    if (d > range + 14 || d >= bestD) return;
+    const dot = Math.cos(angle) * (dx / (d || 1)) + Math.sin(angle) * (dy / (d || 1));
+    if (dot < 0.2) return;
+    bestD = d;
+    best = { tx, ty, dx, dy, d };
+  };
+  for (const e of state.enemies) {
+    if (e.hp > 0) consider(e.x, e.y);
   }
+  for (const ped of state.peds) {
+    if (ped.state !== 'down') consider(ped.x, ped.y);
+  }
+  if (!best) return false;
 
-  function strike(target, isEnemy, index) {
-    const dx = target.x - x;
-    const dy = target.y - y;
-    const distSq = dx * dx + dy * dy;
-    if (distSq > reach) return false;
-    const dist = Math.sqrt(distSq) || 1;
-    // Target must be inside the forward arc.
-    if ((dx / dist) * ax + (dy / dist) * ay < PUNCH_ARC) return false;
-    target.hp = (target.hp || 0) - PUNCH_DAMAGE;
-    // Knockback: shove the target away from the attacker, kept in the world.
-    const push = 26;
-    target.x = Math.min(worldWidth(), Math.max(0, target.x + (dx / dist) * push));
-    target.y = Math.min(worldHeight(), Math.max(0, target.y + (dy / dist) * push));
-    lunge(target);
-    if (target.hp <= 0) {
-      if (isEnemy) killEnemy(state, index);
-      else killPed(state, target);
-    } else {
-      addParticle(state, target.x, target.y, '#e5534b');
-    }
-    return true;
+  const nx = best.dx / (best.d || 1);
+  const ny = best.dy / (best.d || 1);
+  // Knock the target back 18 px unless a wall is in the way.
+  const kx = best.tx + nx * 18;
+  const ky = best.ty + ny * 18;
+  let hitEnemy = null;
+  let hitPed = null;
+  for (const e of state.enemies) {
+    if (e.hp > 0 && e.x === best.tx && e.y === best.ty) hitEnemy = e;
   }
-
-  if (Array.isArray(state.enemies)) {
-    for (let e = state.enemies.length - 1; e >= 0; e -= 1) {
-      if (strike(state.enemies[e], true, e)) events |= EVENT_HIT;
-    }
+  for (const ped of state.peds) {
+    if (ped.state !== 'down' && ped.x === best.tx && ped.y === best.ty) hitPed = ped;
   }
-  if (Array.isArray(state.peds)) {
-    for (const ped of state.peds) {
-      if (ped.state === 'down' || (ped.hp || 0) <= 0) continue;
-      if (strike(ped, false, -1)) events |= EVENT_HIT;
+  if (hitEnemy) {
+    if (!pointInBuilding(buildings, kx, ky)) {
+      hitEnemy.x = kx;
+      hitEnemy.y = ky;
     }
+    damageEnemy(state, hitEnemy, WEAPONS.fists.damage);
+  } else if (hitPed) {
+    if (!pointInBuilding(buildings, kx, ky)) {
+      hitPed.x = kx;
+      hitPed.y = ky;
+    }
+    damagePed(state, hitPed, WEAPONS.fists.damage, 'player');
+    if (hitPed.state !== 'down') hitPed.state = 'flee';
   }
-  return events;
+  // Lunge the attacker 10 px toward the target, wall-checked.
+  const lx = x + nx * 10;
+  const ly = y + ny * 10;
+  if (!pointInBuilding(buildings, lx, ly)) {
+    state.player.x = lx;
+    state.player.y = ly;
+  }
+  spawnSparks(state, best.tx, best.ty, 0.8, '#f1c40f', 4);
+  return true;
 }
