@@ -1,7 +1,9 @@
 // VELMORA — Sunset Streets, a make.fun gta6-01 entry (Node 22, stdlib only).
 //
 // The game itself is plain static files under game/ (game/index.html and its
-// ES modules, no library, no network request). This program hands it in: it
+// ES modules, no network request). The world renders in real 3D with three.js
+// r187, vendored as a minified ES module at game/vendor/three.min.js; the
+// simulation itself stays 2D. This program hands it in: it
 // copies game/ and screenshots/ from beside this file into /output and writes
 // /output/dossier.json, the summary the judge reads, using the vendored
 // make.fun library. Screenshots are real renders of the game in a browser.

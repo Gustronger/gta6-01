@@ -141,6 +141,29 @@ export const DISTRICTS = [
   { id: 'docks', name: 'Docks', x0: 2048, y0: 2048, x1: 4096, y1: 4096 },
 ];
 
+/** Vendored three.js version (game/vendor/three.min.js, minified ES module). */
+export const THREE_VERSION = '0.187.0';
+
+/** 3D camera + sunset rig (scene3d.js). Distances are world units, FOV in degrees. */
+export const CAMERA3D = {
+  followDist: 210,
+  followHeight: 150,
+  chaseDist: 300,
+  chaseHeight: 145,
+  highDist: 1800, // wide establishing shot: ~7 blocks of road grid in frame
+  highPitchDeg: 57,
+  highFov: 50,
+  fov: 55,
+  fovKick: 12,
+  near: 10,
+  far: 12000,
+  sun: { x: -0.55, y: 0.72, z: 0.42 },
+  fogNear: 2000,
+  fogFar: 6500,
+  shadowMapSize: 2048,
+  shadowRange: 750,
+};
+
 /** Event bit flags returned by world.step(). Combine with |. */
 export const EVENT_SHOT = 1;
 export const EVENT_PUNCH = 2;

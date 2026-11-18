@@ -1,10 +1,16 @@
-// Drawing only: the world's state and the current screen in, pixels out. The camera
-// follows Milo (or his car) across the 4096x4096 city, the 1280x720 logical view is
-// scaled to fit the window with letterboxing, and the HUD, minimap and panels are drawn
-// in logical view space. Colours come from config's PALETTE where it defines them;
-// every colour has a sun-soaked fallback so a palette gap never blanks the frame.
+// Drawing only: the world's state and the current screen in, pixels out. The
+// world itself is now real 3D — scene3d.js renders it into the #gl WebGL
+// canvas behind this one — while the HUD, minimap and panels are still drawn
+// on this 2D canvas in logical 1280x720 space, exactly as in v1. Colours come
+// from config's PALETTE where it defines them; every colour has a sun-soaked
+// fallback so a palette gap never blanks the frame.
+//
+// createRenderer(glCanvas, hudCanvas) — with one argument (the HUD canvas,
+// as main.js calls it) the GL canvas is looked up as #gl. screenToWorld
+// raycasts through the 3D camera onto the ground plane.
 
 import { CAR, FONT, PALETTE, VIEW, WORLD } from './config.js';
+import { createScene3D } from './scene3d.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -69,20 +75,25 @@ function money(amount) {
   return '$' + value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-export function createRenderer(canvas) {
-  const ctx = canvas.getContext('2d');
+export function createRenderer(glCanvas, hudCanvas) {
+  // One-argument call (main.js): the argument is the HUD canvas (#game) and
+  // the GL canvas is the #gl element stacked behind it.
+  const hud = hudCanvas || glCanvas;
+  const gl = hudCanvas ? glCanvas : (document.getElementById('gl') || glCanvas);
+  const ctx = hud.getContext('2d');
   // view: how the logical 1280x720 maps onto the real canvas (device pixels).
   const view = { scale: 1, x: 0, y: 0, ratio: 1 };
-  // Last camera used by draw(), in world coords; screenToWorld reads it back.
-  const camera = { x: 0, y: 0 };
   const fonts = new Map();
+  // The 3D scene, built lazily on the first draw once state.city is known.
+  let scene3d = null;
+  let lastT = 0;
 
   function resize() {
     const ratio = window.devicePixelRatio || 1;
     const width = Math.round(window.innerWidth * ratio);
     const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
+    hud.width = width;
+    hud.height = height;
     view.ratio = ratio;
     view.scale = Math.min(width / VIEW_W, height / VIEW_H);
     view.x = (width - VIEW_W * view.scale) / 2;
@@ -105,372 +116,6 @@ export function createRenderer(canvas) {
 
   function clamp(value, min, max) {
     return value < min ? min : value > max ? max : value;
-  }
-
-  function updateCamera(state) {
-    const player = state.player;
-    const cx = player && typeof player.x === 'number' ? player.x : WORLD_W / 2;
-    const cy = player && typeof player.y === 'number' ? player.y : WORLD_H / 2;
-    camera.x = clamp(cx - VIEW_W / 2, 0, WORLD_W - VIEW_W);
-    camera.y = clamp(cy - VIEW_H / 2, 0, WORLD_H - VIEW_H);
-  }
-
-  function inView(x, y, margin) {
-    return x > camera.x - margin && x < camera.x + VIEW_W + margin
-      && y > camera.y - margin && y < camera.y + VIEW_H + margin;
-  }
-
-  // ---- world layers (drawn in world coords, camera already applied) ----
-
-  function drawGround(state) {
-    const city = state.city || {};
-    // Base ground: warm sun-baked earth under everything.
-    ctx.fillStyle = C.ground;
-    ctx.fillRect(camera.x, camera.y, VIEW_W, VIEW_H);
-    // Ocean + beach along the south edge: sand strip, then open water with wave lines.
-    const beachY = (city.beach && city.beach.y0) || 3904;
-    ctx.fillStyle = C.sand;
-    ctx.fillRect(camera.x, Math.max(beachY, camera.y), VIEW_W, WORLD_H - Math.max(beachY, camera.y));
-    const waterY = beachY + 96;
-    if (waterY < camera.y + VIEW_H) {
-      ctx.fillStyle = C.ocean;
-      ctx.fillRect(camera.x, Math.max(waterY, camera.y), VIEW_W, WORLD_H - Math.max(waterY, camera.y));
-      ctx.strokeStyle = C.oceanDeep;
-      ctx.lineWidth = 3;
-      const top = Math.max(waterY + 14, camera.y);
-      for (let y = top; y < WORLD_H; y += 34) {
-        ctx.beginPath();
-        for (let x = camera.x - 40; x < camera.x + VIEW_W + 40; x += 80) {
-          const wave = Math.sin((x + y * 3) / 90) * 5;
-          if (x === camera.x - 40) ctx.moveTo(x, y + wave);
-          else ctx.lineTo(x, y + wave);
-        }
-        ctx.stroke();
-      }
-    }
-  }
-
-  function drawRoads(state) {
-    const city = state.city || {};
-    const roadW = city.roadW || 88;
-    const roads = city.roads || [];
-    // Sidewalks first: a wider pale strip under each road.
-    ctx.fillStyle = C.sidewalk;
-    for (let i = 0; i < roads.length; i += 1) {
-      const r = roads[i];
-      if (r.horizontal) ctx.fillRect(r.x1, r.y1 - roadW / 2 - 10, r.x2 - r.x1, roadW + 20);
-      else ctx.fillRect(r.x1 - roadW / 2 - 10, r.y1, roadW + 20, r.y2 - r.y1);
-    }
-    // Asphalt.
-    ctx.fillStyle = C.road;
-    for (let i = 0; i < roads.length; i += 1) {
-      const r = roads[i];
-      if (r.horizontal) ctx.fillRect(r.x1, r.y1 - roadW / 2, r.x2 - r.x1, roadW);
-      else ctx.fillRect(r.x1 - roadW / 2, r.y1, roadW, r.y2 - r.y1);
-    }
-    // Centre lane dashes.
-    ctx.fillStyle = C.lane;
-    for (let i = 0; i < roads.length; i += 1) {
-      const r = roads[i];
-      if (r.horizontal) {
-        const y = r.y1;
-        for (let x = r.x1 + 20; x < r.x2 - 20; x += 64) ctx.fillRect(x, y - 2, 34, 4);
-      } else {
-        const x = r.x1;
-        for (let y = r.y1 + 20; y < r.y2 - 20; y += 64) ctx.fillRect(x - 2, y, 4, 34);
-      }
-    }
-  }
-
-  function drawParks(state) {
-    const city = state.city || {};
-    const parks = city.parks || [];
-    for (let i = 0; i < parks.length; i += 1) {
-      const p = parks[i];
-      if (!inView(p.x + p.w / 2, p.y + p.h / 2, Math.max(p.w, p.h))) continue;
-      ctx.fillStyle = C.park;
-      ctx.fillRect(p.x, p.y, p.w, p.h);
-      // Trees: a loose grid of two-tone canopies.
-      const step = 64;
-      let n = 0;
-      for (let ty = p.y + 30; ty < p.y + p.h - 20; ty += step) {
-        for (let tx = p.x + 30; tx < p.x + p.w - 20; tx += step) {
-          n += 1;
-          if (n % 3 === 0) continue;
-          ctx.fillStyle = n % 2 === 0 ? C.tree : C.treeLight;
-          ctx.beginPath();
-          ctx.arc(tx, ty, 15, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = 'rgba(0,0,0,0.18)';
-          ctx.beginPath();
-          ctx.arc(tx - 4, ty + 5, 15, 0, Math.PI);
-          ctx.fill();
-        }
-      }
-    }
-  }
-
-  function drawBuildings(state) {
-    const city = state.city || {};
-    const buildings = city.buildings || [];
-    for (let i = 0; i < buildings.length; i += 1) {
-      const b = buildings[i];
-      if (!inView(b.x + b.w / 2, b.y + b.h / 2, Math.max(b.w, b.h))) continue;
-      // Drop shadow, offset down-right.
-      ctx.fillStyle = C.shadow;
-      ctx.fillRect(b.x + 7, b.y + 9, b.w, b.h);
-      // Body in the district colour the city assigned.
-      ctx.fillStyle = b.color || '#8a6f5c';
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-      // Roof detail: inset slab, a pale edge, and a few rooftop boxes.
-      ctx.fillStyle = C.roofLine;
-      ctx.fillRect(b.x + 5, b.y + 5, b.w - 10, 3);
-      ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(b.x + 6, b.y + 6, b.w - 12, b.h - 12);
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      const boxes = Math.max(1, Math.floor((b.w * b.h) / 9000));
-      for (let k = 0; k < boxes; k += 1) {
-        const bx = b.x + 12 + ((k * 53) % Math.max(1, b.w - 32));
-        const by = b.y + 12 + ((k * 37) % Math.max(1, b.h - 32));
-        ctx.fillRect(bx, by, 14, 10);
-      }
-      // Towers read taller: a bright glass glint down one side.
-      if (b.kind === 'tower') {
-        ctx.fillStyle = 'rgba(255,255,255,0.28)';
-        ctx.fillRect(b.x + 8, b.y + 10, 5, b.h - 20);
-      }
-    }
-  }
-
-  function drawCar(car, time) {
-    if (!inView(car.x, car.y, 80)) return;
-    const length = car.kind === 'truck' ? 62 : car.kind === 'sport' ? 46 : 50;
-    const width = car.kind === 'truck' ? 26 : 22;
-    ctx.save();
-    ctx.translate(car.x, car.y);
-    ctx.rotate(car.angle || 0);
-    ctx.fillStyle = C.shadow;
-    ctx.fillRect(-length / 2 + 3, -width / 2 + 4, length, width);
-    ctx.fillStyle = car.kind === 'police' ? C.policeBody : (car.color || '#c0c0c0');
-    ctx.beginPath();
-    ctx.roundRect(-length / 2, -width / 2, length, width, 6);
-    ctx.fill();
-    // Cabin + windows.
-    ctx.fillStyle = 'rgba(20, 28, 44, 0.85)';
-    ctx.fillRect(-length * 0.18, -width / 2 + 3, length * 0.34, width - 6);
-    ctx.fillStyle = 'rgba(160, 200, 235, 0.5)';
-    ctx.fillRect(-length * 0.18, -width / 2 + 4, 5, width - 8);
-    // Headlights and taillights.
-    ctx.fillStyle = '#fff6c0';
-    ctx.fillRect(length / 2 - 2, -width / 2 + 2, 3, 5);
-    ctx.fillRect(length / 2 - 2, width / 2 - 7, 3, 5);
-    ctx.fillStyle = '#ff4a3d';
-    ctx.fillRect(-length / 2 - 1, -width / 2 + 2, 3, 5);
-    ctx.fillRect(-length / 2 - 1, width / 2 - 7, 3, 5);
-    // Police light bar, flashing red/blue with the clock.
-    if (car.kind === 'police') {
-      const redOn = Math.floor(time * 4) % 2 === 0;
-      ctx.fillStyle = redOn ? C.policeRed : C.policeBlue;
-      ctx.fillRect(-7, -width / 2 - 2, 7, 5);
-      ctx.fillStyle = redOn ? C.policeBlue : C.policeRed;
-      ctx.fillRect(0, -width / 2 - 2, 7, 5);
-    }
-    ctx.restore();
-  }
-
-  function drawPed(ped) {
-    if (!inView(ped.x, ped.y, 40)) return;
-    const down = ped.state === 'down';
-    ctx.save();
-    ctx.translate(ped.x, ped.y);
-    if (down) ctx.rotate(Math.PI / 2);
-    const shirt = ped.kind === 'cop' ? C.copBlue : ped.kind === 'gang' ? C.gangRed : C.pedShirt;
-    ctx.fillStyle = C.shadow;
-    ctx.beginPath();
-    ctx.ellipse(1, 2, 8, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = shirt;
-    ctx.beginPath();
-    ctx.arc(0, 0, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#e8b98a';
-    ctx.beginPath();
-    ctx.arc(Math.cos(ped.angle || 0) * 3, Math.sin(ped.angle || 0) * 3, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawEnemy(enemy, time) {
-    if (!inView(enemy.x, enemy.y, 40)) return;
-    ctx.save();
-    ctx.translate(enemy.x, enemy.y);
-    ctx.fillStyle = C.shadow;
-    ctx.beginPath();
-    ctx.ellipse(1, 2, 9, 8, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = C.gangRed;
-    ctx.beginPath();
-    ctx.arc(0, 0, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#1c1c22';
-    ctx.beginPath();
-    ctx.arc(Math.cos(enemy.angle || 0) * 4, Math.sin(enemy.angle || 0) * 4, 4, 0, Math.PI * 2);
-    ctx.fill();
-    // Gun barrel pointing at the aim angle.
-    ctx.strokeStyle = '#22222a';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(enemy.angle || 0) * 16, Math.sin(enemy.angle || 0) * 16);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawBullets(state) {
-    const bullets = state.bullets || [];
-    ctx.strokeStyle = C.bullet;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    for (let i = 0; i < bullets.length; i += 1) {
-      const b = bullets[i];
-      const len = Math.hypot(b.vx, b.vy) || 1;
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y);
-      ctx.lineTo(b.x - (b.vx / len) * 18, b.y - (b.vy / len) * 18);
-      ctx.stroke();
-    }
-    ctx.lineCap = 'butt';
-  }
-
-  function drawParticles(state) {
-    const particles = state.particles || [];
-    for (let i = 0; i < particles.length; i += 1) {
-      const p = particles[i];
-      if (!inView(p.x, p.y, 20)) continue;
-      const alpha = clamp((p.life || 0) * 2, 0, 1);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = p.color || '#ffd76a';
-      const size = p.size || 4;
-      ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size);
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  function drawPickups(state, time) {
-    const pickups = state.pickups || [];
-    for (let i = 0; i < pickups.length; i += 1) {
-      const p = pickups[i];
-      if (!inView(p.x, p.y, 30)) continue;
-      const bob = Math.sin(time * 3 + i) * 2;
-      const y = p.y + bob;
-      if (p.kind === 'cash') {
-        ctx.fillStyle = C.cash;
-        ctx.beginPath();
-        ctx.arc(p.x, y, 11, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#1e6b2e';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        text('$', p.x, y + 5, 14, '#1e6b2e', 'center', 'bold');
-      } else if (p.kind === 'health') {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(p.x - 10, y - 10, 20, 20);
-        ctx.fillStyle = '#e23b3b';
-        ctx.fillRect(p.x - 3, y - 8, 6, 16);
-        ctx.fillRect(p.x - 8, y - 3, 16, 6);
-      } else {
-        // ammo: yellow crate with dark band
-        ctx.fillStyle = '#f2c94c';
-        ctx.fillRect(p.x - 9, y - 7, 18, 14);
-        ctx.fillStyle = '#7a5b00';
-        ctx.fillRect(p.x - 9, y - 2, 18, 4);
-      }
-    }
-  }
-
-  function drawMarker(state, time) {
-    const mission = state.mission;
-    if (!mission || !mission.marker) return;
-    const m = mission.marker;
-    const pulse = 1 + Math.sin(time * 5) * 0.18;
-    if (inView(m.x, m.y, 60)) {
-      ctx.strokeStyle = C.marker;
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, 26 * pulse, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = C.marker;
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, 6, 0, Math.PI * 2);
-      ctx.fill();
-      // Down-pointing chevron above the ring.
-      ctx.beginPath();
-      ctx.moveTo(m.x - 9, m.y - 34);
-      ctx.lineTo(m.x + 9, m.y - 34);
-      ctx.lineTo(m.x, m.y - 22);
-      ctx.closePath();
-      ctx.fill();
-    } else {
-      // Off-screen: an arrow pinned to the view edge, pointing at the marker.
-      const dx = m.x - (camera.x + VIEW_W / 2);
-      const dy = m.y - (camera.y + VIEW_H / 2);
-      const angle = Math.atan2(dy, dx);
-      const ex = camera.x + VIEW_W / 2 + Math.cos(angle) * (VIEW_W / 2 - 46);
-      const ey = camera.y + VIEW_H / 2 + Math.sin(angle) * (VIEW_H / 2 - 46);
-      const ax = clamp(ex, camera.x + 30, camera.x + VIEW_W - 30);
-      const ay = clamp(ey, camera.y + 30, camera.y + VIEW_H - 30);
-      ctx.save();
-      ctx.translate(ax, ay);
-      ctx.rotate(angle);
-      ctx.fillStyle = C.marker;
-      ctx.beginPath();
-      ctx.moveTo(16, 0);
-      ctx.lineTo(-10, -11);
-      ctx.lineTo(-4, 0);
-      ctx.lineTo(-10, 11);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  function drawPlayer(state, time) {
-    const player = state.player;
-    if (!player || !player.alive || !player.onFoot) return;
-    if (!inView(player.x, player.y, 40)) return;
-    // Blink while hurt recently: hidden on alternate tenths of a second.
-    const blink = Math.floor(time * 10) % 2 === 0 && player.health < 30;
-    if (blink) return;
-    ctx.save();
-    ctx.translate(player.x, player.y);
-    ctx.rotate(player.angle || 0);
-    ctx.fillStyle = C.shadow;
-    ctx.beginPath();
-    ctx.ellipse(2, 3, 10, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // Milo: teal jacket, dark jeans.
-    ctx.fillStyle = '#1f9d8a';
-    ctx.beginPath();
-    ctx.arc(0, 0, 9, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#2b2b33';
-    ctx.fillRect(-4, -8, 8, 5);
-    ctx.fillRect(-4, 3, 8, 5);
-    ctx.fillStyle = '#e8b98a';
-    ctx.beginPath();
-    ctx.arc(7, 0, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    // Aim line when armed.
-    if (player.weapon && player.weapon !== 'fists') {
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(10, 0);
-      ctx.lineTo(26, 0);
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   // ---- HUD + screens (drawn in logical view coords) ----
@@ -651,7 +296,7 @@ export function createRenderer(canvas) {
   }
 
   function drawTitle(state, ui) {
-    // Dim the living city behind the title.
+    // Dim the living 3D city behind the title.
     ctx.fillStyle = 'rgba(16, 10, 28, 0.55)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     text('VELMORA', VIEW_W / 2, 108, 84, C.accent, 'center', 'bold');
@@ -695,29 +340,18 @@ export function createRenderer(canvas) {
 
   /** Paint one frame for `screen`, over the world in `state`. */
   function draw(state, screen, ui) {
-    updateCamera(state);
+    resize();
+    if (!scene3d && state.city && gl) {
+      scene3d = createScene3D(gl, state.city);
+    }
+    // The 3D world renders synchronously into the GL canvas first.
+    const now = performance.now();
+    const dt = lastT ? Math.min((now - lastT) / 1000, 0.1) : 0;
+    lastT = now;
+    if (scene3d) scene3d.sync(state, dt);
+    // HUD / screens in logical view space, on the transparent HUD canvas.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = C.backdrop;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // World space: scale to the view, then shift by the camera.
-    ctx.setTransform(view.scale, 0, 0, view.scale, view.x - camera.x * view.scale, view.y - camera.y * view.scale);
-    const time = state.time || 0;
-    drawGround(state);
-    drawRoads(state);
-    drawParks(state);
-    drawBuildings(state);
-    drawPickups(state, time);
-    const cars = state.cars || [];
-    for (let i = 0; i < cars.length; i += 1) drawCar(cars[i], time);
-    const peds = state.peds || [];
-    for (let i = 0; i < peds.length; i += 1) drawPed(peds[i]);
-    const enemies = state.enemies || [];
-    for (let i = 0; i < enemies.length; i += 1) drawEnemy(enemies[i], time);
-    drawBullets(state);
-    drawParticles(state);
-    drawMarker(state, time);
-    drawPlayer(state, time);
-    // HUD / screens in logical view space.
+    ctx.clearRect(0, 0, hud.width, hud.height);
     ctx.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
     if (screen === SCREEN_TITLE) {
       drawTitle(state, ui);
@@ -730,12 +364,9 @@ export function createRenderer(canvas) {
 
   /** Convert a screen point (CSS pixels relative to the canvas) to world coords. */
   function screenToWorld(sx, sy) {
-    const dx = sx * view.ratio;
-    const dy = sy * view.ratio;
-    return {
-      x: camera.x + (dx - view.x) / view.scale,
-      y: camera.y + (dy - view.y) / view.scale,
-    };
+    if (scene3d) return scene3d.screenToWorld(sx, sy, view);
+    // No 3D scene yet (before the first draw): fall back to the city centre.
+    return { x: WORLD_W / 2, y: WORLD_H / 2 };
   }
 
   resize();
