@@ -1,61 +1,156 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
+// VELMORA — Sunset Streets: every tuning number, colour and table in one place.
+// The world is a fixed 4096x4096 city; the renderer scales a 1280x720 logical
+// view over it, so no rule below depends on the screen size.
 
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
+export const WORLD = { width: 4096, height: 4096 };
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
+export const VIEW = { width: 1280, height: 720 };
+
+/** The simulation's fixed step, in seconds: 60 updates a second. */
 export const STEP = 1 / 60;
 
-export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
-};
-
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
-};
-
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
+/** Road lines and width, shared by the city builder and the traffic model. */
+export const ROAD_LINES = [224, 672, 1120, 1568, 2016, 2464, 2912, 3360, 3808];
+export const ROAD_WIDTH = 88;
 
 export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
+  ocean: '#2f7fa8',
+  oceanDeep: '#256b92',
+  beach: '#e8d5a2',
+  boardwalk: '#c9a06a',
+  grass: '#5f9e52',
+  parkDark: '#4c8a44',
+  road: '#3a3f4a',
+  roadEdge: '#2c303a',
+  lane: '#e8d47a',
+  sidewalk: '#9aa0ab',
+  building: '#b98a68',
+  house: '#c99a72',
+  shop: '#d8b25e',
+  tower: '#7fa8c9',
+  towerGlass: '#9cc3de',
+  warehouse: '#8a7f74',
+  roof: '#6e4a3a',
+  player: '#f2c94c',
+  police: '#3f6fd8',
+  taxi: '#f2c94c',
+  text: '#f4efe6',
+  muted: '#a8a294',
+  hud: '#14161c',
 };
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+/** Where the save lives between visits (this browser only). */
+export const SAVE_KEY = 'velmora.save.v1';
+
+export const PLAYER = {
+  walkSpeed: 230,
+  radius: 14,
+  health: 100,
+  enterRange: 64,
+  punchRange: 36,
+  punchDamage: 20,
+  punchCooldown: 0.35,
+  fireCooldown: 0.12,
+  startCash: 200,
+};
+
+export const CAR = {
+  length: 48,
+  width: 26,
+  radius: 21,
+  accel: 540,
+  reverseAccel: 320,
+  brake: 760,
+  maxSpeed: 640,
+  maxReverse: 190,
+  steerRate: 2.7,
+  drag: 0.55,
+  rollingDrag: 0.12,
+  hp: 100,
+  crashSpeed: 320,
+  enterRange: 64,
+};
+
+export const TRAFFIC = {
+  count: 26,
+  parkedCount: 12,
+  minSpeed: 130,
+  maxSpeed: 230,
+  turnChance: 0.22,
+  followGap: 90,
+};
+
+export const PED = {
+  count: 42,
+  walkMin: 38,
+  walkMax: 72,
+  fleeSpeed: 150,
+  radius: 11,
+  taxiChance: 0.12,
+};
+
+export const POLICE = {
+  carSpeed: 560,
+  carAccel: 620,
+  footSpeed: 185,
+  punchDamage: 8,
+  punchRange: 30,
+  punchCooldown: 0.9,
+  spawnDistance: 620,
+  despawnDistance: 1400,
+  ramDamage: 12,
+};
+
+export const WANTED = {
+  max: 5,
+  decayAfter: 12,
+  decayInterval: 8,
+  clearDistance: 400,
+  steal: 1,
+  hitPed: 1,
+  shootPublic: 1,
+  killCop: 1,
+};
+
+export const WEAPONS = {
+  fists: { damage: 20, range: 36, rate: 0.35, bulletSpeed: 0, auto: false },
+  pistol: { damage: 34, range: 520, rate: 0.3, bulletSpeed: 920, auto: false, startAmmo: 12 },
+  smg: { damage: 18, range: 460, rate: 0.09, bulletSpeed: 980, auto: true, startAmmo: 24 },
+};
+
+export const PRICES = {
+  spray: 150,
+  pistol: 200,
+  smg: 350,
+  ammo: 50,
+  ammoAmount: 24,
+  taxiFareMin: 60,
+  taxiFareMax: 150,
+  cashPickupMin: 100,
+  cashPickupMax: 400,
+  healthPickup: 40,
+  ammoPickup: 24,
+};
+
+export const DISTRICTS = [
+  { id: 'oldtown', name: 'Old Town', x0: 0, y0: 0, x1: 2048, y1: 2048 },
+  { id: 'downtown', name: 'Downtown', x0: 2048, y0: 0, x1: 4096, y1: 2048 },
+  { id: 'marina', name: 'Marina', x0: 0, y0: 2048, x1: 2048, y1: 4096 },
+  { id: 'docks', name: 'Docks', x0: 2048, y0: 2048, x1: 4096, y1: 4096 },
+];
+
+/** Event bit flags returned by world.step(). Combine with |. */
+export const EVENT_SHOT = 1;
+export const EVENT_PUNCH = 2;
+export const EVENT_PICKUP = 4;
+export const EVENT_CRASH = 8;
+export const EVENT_WANTED_UP = 16;
+export const EVENT_WANTED_DOWN = 32;
+export const EVENT_MISSION = 64;
+export const EVENT_MISSION_DONE = 128;
+export const EVENT_BUSTED = 256;
+export const EVENT_WASTED = 512;
+export const EVENT_STEAL = 1024;
+export const EVENT_HIT = 2048;
