@@ -1,8 +1,9 @@
 // VELMORA — Sunset Streets: save game.
 //
 // One small record in localStorage: how many story missions are done, cash,
-// best cash and the mute flag. Every access is guarded so private mode (or a
-// missing localStorage) degrades to "no save" instead of throwing.
+// best cash, the mute flag, and the player's 3D camera preference
+// ({mode, dist}). Every access is guarded so private mode (or a missing
+// localStorage) degrades to "no save" instead of throwing.
 import { SAVE_KEY } from './config.js';
 
 function storage() {
@@ -16,11 +17,19 @@ function storage() {
 
 function clean(data) {
   if (!data || typeof data !== 'object') return null;
+  const cameraModes = ['follow', 'chase', 'high'];
+  const savedCamera = (data.camera && typeof data.camera === 'object') ? data.camera : {};
   return {
     missionsDone: Number.isFinite(data.missionsDone) ? Math.max(0, Math.floor(data.missionsDone)) : 0,
     cash: Number.isFinite(data.cash) ? Math.max(0, Math.floor(data.cash)) : 0,
     bestCash: Number.isFinite(data.bestCash) ? Math.max(0, Math.floor(data.bestCash)) : 0,
     muted: !!data.muted,
+    camera: {
+      mode: cameraModes.includes(savedCamera.mode) ? savedCamera.mode : 'follow',
+      dist: Number.isFinite(savedCamera.dist)
+        ? Math.max(160, Math.min(1400, savedCamera.dist))
+        : 260,
+    },
   };
 }
 
@@ -37,7 +46,7 @@ export function loadSave() {
   }
 }
 
-// Persist a save record. Extra fields on `data` are dropped; only the four
+// Persist a save record. Extra fields on `data` are dropped; only the five
 // known fields are stored.
 export function saveGame(data) {
   try {

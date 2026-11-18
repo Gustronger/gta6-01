@@ -105,6 +105,9 @@ function burst(state, x, y, color, count, speed) {
     const a = (i / count) * TWO_PI + state.time;
     state.particles.push({
       x, y,
+      // 3D arc: launched upward, gravity pulls the particle back down.
+      z: 0,
+      vz: 90 + ((i * 41) % 10) * 14,
       vx: Math.cos(a) * speed * (0.4 + 0.6 * ((i * 37) % 10) / 10),
       vy: Math.sin(a) * speed * (0.4 + 0.6 * ((i * 53) % 10) / 10),
       life: 0.5 + ((i * 29) % 10) / 25,
@@ -136,7 +139,11 @@ export function createWorld(random, city) {
     pickups: [],
     mission: { index: -1, step: 0, objective: '', marker: null, timer: 0 },
     stats: { kills: 0, carsStolen: 0, missionsDone: 0, cashEarned: 0 },
-    camera: { x: 0, y: 0 },
+    // 3D camera state (binding contract with the three.js renderer):
+    // mode/dist/yaw drive the 3D view; x/y keep the old 2D camera origin;
+    // locked true means a shot or the player set the mode and step() must
+    // not auto-switch it. Target is the player/car position, already in state.
+    camera: { x: 0, y: 0, mode: 'follow', dist: 260, yaw: 0, locked: false },
     // Side job state (extra to the DESIGN.md shape, for the HUD/renderer):
     // taxi.active while a fare passenger rides with you; taxi.dest is the
     // drop-off point and taxi.fare the payout on arrival.
@@ -270,6 +277,10 @@ export function createWorld(random, city) {
     state._m3Spawned = false;
     state.stats = { kills: 0, carsStolen: 0, missionsDone: 0, cashEarned: 0 };
     state.taxi = { active: false, fare: 0, dest: null };
+    state.camera.mode = 'follow';
+    state.camera.dist = 260;
+    state.camera.yaw = 0;
+    state.camera.locked = false;
 
     for (const s of city.spawns.cars) {
       state.cars.push(makeCar(s.x, s.y, s.angle, 'sedan', 'parked', undefined));
@@ -286,6 +297,12 @@ export function createWorld(random, city) {
   function updateCamera() {
     state.camera.x = clamp(player.x - VIEW.width / 2, 0, WORLD.width - VIEW.width);
     state.camera.y = clamp(player.y - VIEW.height / 2, 0, WORLD.height - VIEW.height);
+    // 3D mode auto-switch: 'chase' while driving, 'follow' on foot — but
+    // only when the mode was not explicitly set (shots.js / camera toggle
+    // set locked: true, and step() must not fight a locked mode).
+    if (!state.camera.locked) {
+      state.camera.mode = player.onFoot ? 'follow' : 'chase';
+    }
   }
 
   function addWanted(n) {
@@ -967,7 +984,13 @@ export function createWorld(random, city) {
       pt.life -= dt;
       pt.x += pt.vx * dt;
       pt.y += pt.vy * dt;
-      if (pt.life <= 0) state.particles.splice(i, 1);
+      // 3D arc: rise on vz, fall under gravity, die on landing. Particles
+      // that never left the ground (vz 0, e.g. combat sparks) are governed
+      // by life alone — only a particle that was airborne dies at z <= 0.
+      const wasAirborne = (pt.z || 0) > 0;
+      pt.z = (pt.z || 0) + (pt.vz || 0) * dt;
+      pt.vz = (pt.vz || 0) - 320 * dt;
+      if (pt.life <= 0 || (wasAirborne && pt.z <= 0)) state.particles.splice(i, 1);
     }
 
     // --- Ambient top-up: the city never empties ------------------------------
@@ -982,6 +1005,11 @@ export function createWorld(random, city) {
     void EVENT_MISSION;
     return events;
   }
+
+  // 3D camera mode (see updateCamera above): step() smooth-follows the
+  // player/car position — the target is already in state — and updateCamera
+  // auto-switches follow/chase unless the mode is locked by a shot or the
+  // player, so step() never fights an explicitly set mode.
 
   reset();
   return { state, reset, step };

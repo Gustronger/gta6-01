@@ -3,6 +3,8 @@
 // next read() call, so a quick tap between two frames is never lost or double-counted.
 // read() returns the input object world.step expects, with mouse x/y in SCREEN coords
 // (CSS pixels relative to the canvas); main.js converts them to world coords.
+// C cycles the 3D camera (camToggle edge flag); the mouse wheel zooms it
+// (zoom: accumulated wheel delta, consumed — reset to 0 — on each read()).
 
 const MOVE_UP = new Set(['KeyW', 'ArrowUp']);
 const MOVE_DOWN = new Set(['KeyS', 'ArrowDown']);
@@ -13,11 +15,13 @@ const PUNCH_KEYS = new Set(['Space']);
 const CONFIRM_KEYS = new Set(['Enter']);
 const PAUSE_KEYS = new Set(['KeyP', 'Escape']);
 const MUTE_KEYS = new Set(['KeyM']);
+const CAMERA_KEYS = new Set(['KeyC']);
 
 // Every key that belongs to the game: these never scroll the page or trigger the browser.
 const GAME_KEYS = new Set([
   ...MOVE_UP, ...MOVE_DOWN, ...MOVE_LEFT, ...MOVE_RIGHT,
   ...ENTER_KEYS, ...PUNCH_KEYS, ...CONFIRM_KEYS, ...PAUSE_KEYS, ...MUTE_KEYS,
+  ...CAMERA_KEYS,
 ]);
 
 export function createInput(canvas) {
@@ -31,6 +35,9 @@ export function createInput(canvas) {
   let confirmQueued = false;
   let pauseQueued = false;
   let muteQueued = false;
+  let camToggleQueued = false;
+  // Mouse-wheel zoom, accumulated since the last read() and consumed there.
+  let wheelDelta = 0;
 
   window.addEventListener('keydown', (event) => {
     if (!GAME_KEYS.has(event.code)) return;
@@ -42,6 +49,7 @@ export function createInput(canvas) {
     else if (CONFIRM_KEYS.has(event.code)) confirmQueued = true;
     else if (PAUSE_KEYS.has(event.code)) pauseQueued = true;
     else if (MUTE_KEYS.has(event.code)) muteQueued = true;
+    else if (CAMERA_KEYS.has(event.code)) camToggleQueued = true;
   });
 
   window.addEventListener('keyup', (event) => {
@@ -74,6 +82,13 @@ export function createInput(canvas) {
     mouseDown = false;
   });
 
+  // Mouse wheel: zoom the 3D camera in/out. Accumulated here, consumed by
+  // read() as `zoom` (reset to 0 after each read).
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    wheelDelta += event.deltaY;
+  }, { passive: false });
+
   function anyHeld(codes) {
     for (const code of codes) if (held.has(code)) return true;
     return false;
@@ -97,6 +112,8 @@ export function createInput(canvas) {
         confirm: confirmQueued,
         pause: pauseQueued,
         mute: muteQueued,
+        camToggle: camToggleQueued,
+        zoom: wheelDelta,
         mouse: { x: mouseX, y: mouseY, down: mouseDown },
       };
       enterQueued = false;
@@ -104,6 +121,8 @@ export function createInput(canvas) {
       confirmQueued = false;
       pauseQueued = false;
       muteQueued = false;
+      camToggleQueued = false;
+      wheelDelta = 0;
       return input;
     },
   };

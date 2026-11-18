@@ -38,7 +38,7 @@ export function createAudio() {
     }
   }
 
-  function tone(freq, freqEnd, dur, type, vol, delay) {
+  function tone(freq, freqEnd, dur, type, vol, delay, dest) {
     if (!ctx || !master) return;
     try {
       const t0 = ctx.currentTime + (delay || 0);
@@ -50,7 +50,7 @@ export function createAudio() {
       gain.gain.setValueAtTime(vol, t0);
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
       osc.connect(gain);
-      gain.connect(master);
+      gain.connect(dest || master);
       osc.start(t0);
       osc.stop(t0 + dur + 0.02);
     } catch {
@@ -58,7 +58,7 @@ export function createAudio() {
     }
   }
 
-  function noise(dur, vol, filterFreq, filterType, delay) {
+  function noise(dur, vol, filterFreq, filterType, delay, dest) {
     if (!ctx || !master) return;
     try {
       const t0 = ctx.currentTime + (delay || 0);
@@ -76,7 +76,7 @@ export function createAudio() {
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
       src.connect(filter);
       filter.connect(gain);
-      gain.connect(master);
+      gain.connect(dest || master);
       src.start(t0);
       src.stop(t0 + dur + 0.02);
     } catch {
@@ -84,55 +84,58 @@ export function createAudio() {
     }
   }
 
+  // Every effect takes an optional `dest` node to connect through; without
+  // one it plays straight into the master bus, exactly as before. sfxAt
+  // passes a distance-attenuated, panned chain as `dest`.
   const SFX = {
-    shot() {
-      noise(0.12, 0.5, 1800);
-      tone(180, 60, 0.1, 'square', 0.25);
+    shot(dest) {
+      noise(0.12, 0.5, 1800, undefined, 0, dest);
+      tone(180, 60, 0.1, 'square', 0.25, 0, dest);
     },
-    punch() {
-      tone(120, 50, 0.12, 'sine', 0.5);
-      noise(0.06, 0.25, 900);
+    punch(dest) {
+      tone(120, 50, 0.12, 'sine', 0.5, 0, dest);
+      noise(0.06, 0.25, 900, undefined, 0, dest);
     },
-    pickup() {
-      tone(660, 660, 0.07, 'sine', 0.3);
-      tone(880, 880, 0.1, 'sine', 0.3, 0.07);
+    pickup(dest) {
+      tone(660, 660, 0.07, 'sine', 0.3, 0, dest);
+      tone(880, 880, 0.1, 'sine', 0.3, 0.07, dest);
     },
-    siren() {
-      tone(750, 750, 0.16, 'triangle', 0.25);
-      tone(950, 950, 0.16, 'triangle', 0.25, 0.16);
+    siren(dest) {
+      tone(750, 750, 0.16, 'triangle', 0.25, 0, dest);
+      tone(950, 950, 0.16, 'triangle', 0.25, 0.16, dest);
     },
-    crash() {
-      noise(0.3, 0.5, 420);
-      tone(90, 40, 0.25, 'sine', 0.4);
+    crash(dest) {
+      noise(0.3, 0.5, 420, undefined, 0, dest);
+      tone(90, 40, 0.25, 'sine', 0.4, 0, dest);
     },
-    mission() {
-      tone(440, 440, 0.12, 'triangle', 0.3);
-      tone(523, 523, 0.12, 'triangle', 0.3, 0.12);
-      tone(659, 659, 0.12, 'triangle', 0.3, 0.24);
-      tone(880, 880, 0.22, 'triangle', 0.3, 0.36);
+    mission(dest) {
+      tone(440, 440, 0.12, 'triangle', 0.3, 0, dest);
+      tone(523, 523, 0.12, 'triangle', 0.3, 0.12, dest);
+      tone(659, 659, 0.12, 'triangle', 0.3, 0.24, dest);
+      tone(880, 880, 0.22, 'triangle', 0.3, 0.36, dest);
     },
-    wasted() {
-      tone(330, 330, 0.25, 'sawtooth', 0.25);
-      tone(262, 262, 0.25, 'sawtooth', 0.25, 0.25);
-      tone(196, 130, 0.5, 'sawtooth', 0.25, 0.5);
+    wasted(dest) {
+      tone(330, 330, 0.25, 'sawtooth', 0.25, 0, dest);
+      tone(262, 262, 0.25, 'sawtooth', 0.25, 0.25, dest);
+      tone(196, 130, 0.5, 'sawtooth', 0.25, 0.5, dest);
     },
-    busted() {
-      tone(220, 220, 0.2, 'square', 0.25);
-      tone(175, 175, 0.35, 'square', 0.25, 0.2);
+    busted(dest) {
+      tone(220, 220, 0.2, 'square', 0.25, 0, dest);
+      tone(175, 175, 0.35, 'square', 0.25, 0.2, dest);
     },
-    click() {
-      tone(1000, 1000, 0.03, 'square', 0.15);
+    click(dest) {
+      tone(1000, 1000, 0.03, 'square', 0.15, 0, dest);
     },
-    steal() {
-      tone(300, 700, 0.15, 'sawtooth', 0.25);
+    steal(dest) {
+      tone(300, 700, 0.15, 'sawtooth', 0.25, 0, dest);
     },
-    cash() {
-      tone(988, 988, 0.08, 'sine', 0.3);
-      tone(1319, 1319, 0.14, 'sine', 0.3, 0.08);
+    cash(dest) {
+      tone(988, 988, 0.08, 'sine', 0.3, 0, dest);
+      tone(1319, 1319, 0.14, 'sine', 0.3, 0.08, dest);
     },
-    buy() {
-      tone(784, 784, 0.08, 'triangle', 0.3);
-      tone(1047, 1047, 0.14, 'triangle', 0.3, 0.08);
+    buy(dest) {
+      tone(784, 784, 0.08, 'triangle', 0.3, 0, dest);
+      tone(1047, 1047, 0.14, 'triangle', 0.3, 0.08, dest);
     },
   };
 
@@ -141,6 +144,37 @@ export function createAudio() {
       if (!ensure()) return;
       const fn = SFX[name];
       if (fn) fn();
+    } catch {
+      // Never throw from a sound effect.
+    }
+  }
+
+  // Positional one-shot: the sound at (x, y) heard from listener (lx, ly).
+  // Volume attenuates with distance (silent past ~900 world units) and the
+  // sound is panned left/right from the relative x of the source.
+  function sfxAt(name, x, y, lx, ly) {
+    try {
+      if (!ensure()) return;
+      const fn = SFX[name];
+      if (!fn) return;
+      const sx = Number.isFinite(x) ? x : 0;
+      const sy = Number.isFinite(y) ? y : 0;
+      const hearX = Number.isFinite(lx) ? lx : 0;
+      const hearY = Number.isFinite(ly) ? ly : 0;
+      const dist = Math.hypot(sx - hearX, sy - hearY);
+      const vol = Math.max(0, 1 - dist / 900);
+      if (vol <= 0.02) return;
+      const gain = ctx.createGain();
+      gain.gain.value = vol;
+      if (typeof ctx.createStereoPanner === 'function') {
+        const pan = ctx.createStereoPanner();
+        pan.pan.value = Math.max(-1, Math.min(1, (sx - hearX) / 600));
+        gain.connect(pan);
+        pan.connect(master);
+      } else {
+        gain.connect(master);
+      }
+      fn(gain);
     } catch {
       // Never throw from a sound effect.
     }
@@ -262,6 +296,7 @@ export function createAudio() {
   return {
     ensure,
     sfx,
+    sfxAt,
     engine,
     siren,
     musicStart,
