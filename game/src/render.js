@@ -4,7 +4,7 @@
 // in logical view space. Colours come from config's PALETTE where it defines them;
 // every colour has a sun-soaked fallback so a palette gap never blanks the frame.
 
-import { FONT, PALETTE, VIEW, WORLD } from './config.js';
+import { CAR, FONT, PALETTE, VIEW, WORLD } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -526,21 +526,28 @@ export function createRenderer(canvas) {
       text(ui.message, VIEW_W / 2, 90, 22, C.accent, 'center', 'bold');
     }
     drawMinimap(state);
-    // Weapon + ammo and speed, bottom-right, on a dark plate so road markings
-    // never show through the text.
-    const weapon = (player.weapon || 'fists').toUpperCase();
-    const ammo = player.weapon === 'fists' ? '∞' : String(player.ammo || 0);
-    const weaponLabel = weapon + '  ' + ammo;
-    ctx.font = font(24, 'bold');
-    const weaponW = ctx.measureText(weaponLabel).width;
+    // Bottom-right HUD, on a dark plate so road markings never show through
+    // the text. Car speed is px/s (CAR.maxSpeed is full speed); show it as a
+    // road speed with full speed at 180 km/h, not the raw px/s number. The
+    // weapon readout is hidden while driving — fists need no HUD slot there.
     const driving = !player.onFoot && player.car;
-    const plateTop = driving ? VIEW_H - 92 : VIEW_H - 60;
-    ctx.fillStyle = C.healthBg;
-    ctx.fillRect(VIEW_W - 24 - weaponW - 16, plateTop, weaponW + 36, VIEW_H - 12 - plateTop);
-    text(weaponLabel, VIEW_W - 24, VIEW_H - 24, 24, C.text, 'right', 'bold');
     if (driving) {
-      const speed = Math.round(Math.abs(player.car.speed || 0));
-      text(speed + ' km/h', VIEW_W - 24, VIEW_H - 56, 20, C.muted, 'right');
+      const kmh = Math.min(180, Math.round(Math.abs(player.car.speed || 0) * 180 / (CAR.maxSpeed || 640)));
+      const speedLabel = kmh + ' km/h';
+      ctx.font = font(20);
+      const speedW = ctx.measureText(speedLabel).width;
+      ctx.fillStyle = C.healthBg;
+      ctx.fillRect(VIEW_W - 24 - speedW - 16, VIEW_H - 92, speedW + 36, 44);
+      text(speedLabel, VIEW_W - 24, VIEW_H - 56, 20, C.muted, 'right');
+    } else {
+      const weapon = (player.weapon || 'fists').toUpperCase();
+      const ammo = player.weapon === 'fists' ? '∞' : String(player.ammo || 0);
+      const weaponLabel = weapon + '  ' + ammo;
+      ctx.font = font(24, 'bold');
+      const weaponW = ctx.measureText(weaponLabel).width;
+      ctx.fillStyle = C.healthBg;
+      ctx.fillRect(VIEW_W - 24 - weaponW - 16, VIEW_H - 60, weaponW + 36, 48);
+      text(weaponLabel, VIEW_W - 24, VIEW_H - 24, 24, C.text, 'right', 'bold');
     }
     // Controls hint, fading out over the first seconds of play.
     if (time < 12) {
