@@ -147,9 +147,9 @@ export const THREE_VERSION = '0.187.0';
 /** 3D camera + sunset rig (scene3d.js). Distances are world units, FOV in degrees. */
 export const CAMERA3D = {
   followDist: 210,
-  followHeight: 150,
-  chaseDist: 300,
-  chaseHeight: 145,
+  followHeight: 175,
+  chaseDist: 330,
+  chaseHeight: 190,
   highDist: 1800, // wide establishing shot: ~7 blocks of road grid in frame
   highPitchDeg: 57,
   highFov: 50,

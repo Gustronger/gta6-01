@@ -94,7 +94,7 @@ function buildingDepth(b, spans) {
 
 const ROOF_COLORS = {
   tower: '#dfeaf2',
-  warehouse: '#5a5148',
+  warehouse: '#7d6a58',
   house: '#6e4a3a',
   shop: '#8a6f3a',
 };
@@ -114,6 +114,38 @@ export function createScene3D(glCanvas, city) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(SUNSET_SKY);
   scene.fog = new THREE.Fog(SUNSET_FOG, FOG_NEAR, FOG_FAR);
+
+  // Gradient sunset sky dome (horizon peach -> dusk mauve above, warm haze
+  // below, sun glow toward the sun). It replaces the flat background colour
+  // so the sky never reads as an empty peach wall; it ignores fog, writes no
+  // depth, and is re-centred on the player every frame in updateCamera.
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      topColor: { value: new THREE.Color(0x6a4a7a) },
+      horizonColor: { value: new THREE.Color(0xffc98a) },
+      groundColor: { value: new THREE.Color(0x8a5a3a) },
+      sunDir: { value: new THREE.Vector3(-0.55, 0.72, 0.42).normalize() },
+      sunColor: { value: new THREE.Color(0xffd9a0) },
+    },
+    vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: [
+      'varying vec3 vDir;',
+      'uniform vec3 topColor; uniform vec3 horizonColor; uniform vec3 groundColor;',
+      'uniform vec3 sunDir; uniform vec3 sunColor;',
+      'void main() {',
+      '  float h = clamp(vDir.y, -1.0, 1.0);',
+      '  vec3 col = h >= 0.0 ? mix(horizonColor, topColor, pow(h, 0.55)) : mix(horizonColor, groundColor, pow(-h, 0.6));',
+      '  float s = max(dot(normalize(vDir), normalize(sunDir)), 0.0);',
+      '  col += sunColor * pow(s, 24.0) * 0.55;',
+      '  gl_FragColor = vec4(col, 1.0);',
+      '}',
+    ].join('\n'),
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(9000, 24, 16), skyMat);
+  sky.frustumCulled = false;
+  scene.add(sky);
 
   const camera = new THREE.PerspectiveCamera(CFG.fov || 55, VIEW_W / VIEW_H, CFG.near || 10, CFG.far || 12000);
   camera.position.set(0, 400, 600);
@@ -551,22 +583,22 @@ export function createScene3D(glCanvas, city) {
       lookZ = tz;
       fov = CFG.highFov || 50;
     } else if (mode === 'chase') {
-      const h = CFG.chaseHeight || 145;
+      const h = CFG.chaseHeight || 190;
       eyeX = tx + Math.cos(behind) * dist;
       eyeY = h;
       eyeZ = tz + Math.sin(behind) * dist;
       lookX = tx + Math.cos(heading) * 130;
-      lookY = 16;
+      lookY = 12;
       lookZ = tz + Math.sin(heading) * 130;
       const speed = player.car ? Math.abs(player.car.speed || 0) : 0;
       fov = (CFG.fov || 55) + clamp(speed / 640, 0, 1) * (CFG.fovKick || 12);
     } else {
-      const h = CFG.followHeight || 150;
+      const h = CFG.followHeight || 175;
       eyeX = tx + Math.cos(behind) * dist;
       eyeY = h;
       eyeZ = tz + Math.sin(behind) * dist;
       lookX = tx + Math.cos(heading) * 60;
-      lookY = 14;
+      lookY = 12;
       lookZ = tz + Math.sin(heading) * 60;
     }
     if (!cameraInit || dt <= 0) {
@@ -592,6 +624,8 @@ export function createScene3D(glCanvas, city) {
     sun.position.set(tx + sunDir.x * 1600, sunDir.y * 1600, tz + sunDir.z * 1600);
     sun.target.position.set(tx, 0, tz);
     sun.target.updateMatrixWorld();
+    // The sky dome follows the player so the camera never leaves it.
+    sky.position.set(tx, 0, tz);
   }
 
   // ---- per-frame sync -------------------------------------------------------
