@@ -51,11 +51,11 @@ function hash2(x, y) {
   return h / 4294967295;
 }
 
-// Height of a building in 3D. Worker B's city.js stores the height in `h`
-// (marked by `winSeed`; towers 90-160, houses 14-26, warehouses 22-34,
-// shops 18-30) and the footprint depth has to be rebuilt from the road
-// spans — see buildingDepth below. A plain `height` field wins if present;
-// with neither, derive height from kind/district.
+// Height of a building in 3D. city.js stores it in `height` (towers 90-160,
+// houses 14-26, warehouses 22-34, shops 18-30); a plain `height` field wins
+// if present. Older data kept the height in `h` (marked by `winSeed`) —
+// then the footprint depth is rebuilt from the road spans, see
+// buildingDepth below. With neither, derive height from kind/district.
 function buildingHeight(b) {
   if (typeof b.height === 'number') return b.height;
   if (typeof b.height3d === 'number') return b.height3d;
@@ -80,9 +80,10 @@ function blockSpans(cityData) {
   return spans;
 }
 
-// Footprint depth of a building. In B's city data `h` is the height, so the
-// depth is rebuilt from the block span the building sits in (span - 24, the
-// same inset city.js used); in v1 data `h` already is the depth.
+// Footprint depth of a building. `h` is the depth in current city data, so
+// the span rebuild below returns the same value; for older data where `h`
+// held the height (marked by `winSeed`), the depth is rebuilt from the
+// block span the building sits in (span - 24, the same inset city.js used).
 function buildingDepth(b, spans) {
   if (b.winSeed === undefined) return b.h;
   for (const s of spans) {

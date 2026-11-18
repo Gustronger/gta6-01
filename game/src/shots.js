@@ -50,7 +50,7 @@ function setCamera(state, mode, dist, yaw) {
 /** 'start': six seconds of traffic and peds moving under the title screen. */
 function stageStart(world) {
   // High over the city center, title screen.
-  setCamera(world.state, 'high', 1300, 0.4);
+  setCamera(world.state, 'high', 1500, 0.4);
   run(world, 6);
   return { screen: SCREEN_TITLE, best: 0 };
 }
@@ -59,7 +59,7 @@ function stageStart(world) {
 function stageCover(world) {
   const state = world.state;
   // Elevated wide over Downtown.
-  setCamera(state, 'high', 1100, -0.6);
+  setCamera(state, 'high', 1700, -0.6);
   const spot = nearIntersection(2900, 700);
   state.player.x = spot.x;
   state.player.y = spot.y;

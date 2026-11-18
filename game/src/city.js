@@ -145,17 +145,18 @@ export function createCity(random) {
           color = pick(rng, SHOP_COLORS);
           roof = 'flat';
         }
-        // Towers rise taller than their footprint suggests; keep the rect
-        // itself honest so collision stays simple and the renderer can draw
-        // height from the kind. 3D fields: h is the building height in world
-        // units (towers 90-160, houses 14-26, warehouses 22-34, shops 18-30)
-        // and winSeed varies the window pattern per building.
+        // Towers rise taller than their footprint suggests; the rect
+        // (x, y, w, h) stays the footprint so collision stays simple.
+        // The 3D height lives in `height` (towers 90-160, houses 14-26,
+        // warehouses 22-34, shops 18-30) and winSeed varies the window
+        // pattern per building. (Never store the height in `h`: that key
+        // is the footprint depth the collision code reads.)
         const heightByKind = { tower: [90, 160], house: [14, 26], warehouse: [22, 34], shop: [18, 30] };
         const heightRange = heightByKind[kind] || [14, 26];
         buildings.push({
           x: bx0, y: by0, w, h,
           kind, district, color, roof,
-          h: randInt(rng, heightRange[0], heightRange[1]),
+          height: randInt(rng, heightRange[0], heightRange[1]),
           winSeed: randInt(rng, 0, 9999),
         });
       }
